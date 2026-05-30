@@ -15,10 +15,6 @@ backed by AWS SSM instead of `~/.ssh/config`. No bastion host, no open port
 
 ![lazyssm demo](docs/demo.gif)
 
-> Demo recorded with [VHS](https://github.com/charmbracelet/vhs) from
-> [`demo/lazyssm.tape`](demo/lazyssm.tape) using built-in demo data
-> (`LAZYSSM_DEMO=1`) — no AWS account required. Re-record with `vhs demo/lazyssm.tape`.
-
 ---
 
 ## Why
