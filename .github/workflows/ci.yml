@@ -45,6 +45,7 @@ jobs:
       - uses: golang/govulncheck-action@v1
 
   build:
+    needs: [test, lint, govulncheck]
     runs-on: ubuntu-latest
     strategy:
       matrix:
