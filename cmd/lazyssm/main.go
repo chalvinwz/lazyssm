@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -17,6 +18,10 @@ import (
 
 // version is set at build time via -ldflags "-X main.version=…".
 var version = "dev"
+
+// loadTimeout bounds AWS config/credential resolution so a wedged IMDS or
+// credential provider can't hang startup indefinitely.
+const loadTimeout = 15 * time.Second
 
 func main() {
 	profile := flag.String("profile", "", "AWS profile to use (overrides AWS_PROFILE)")
@@ -56,7 +61,20 @@ Flags:
 }
 
 func runTUI(profile, region string) int {
-	clients, err := awscfg.Load(context.Background(), profile, region)
+	// Demo mode (LAZYSSM_DEMO=1) serves fixed sample data without touching AWS,
+	// for recording screenshots/GIFs.
+	if os.Getenv("LAZYSSM_DEMO") != "" {
+		m := ui.NewDemo(profile, region)
+		if _, err := tea.NewProgram(m).Run(); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			return 1
+		}
+		return 0
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
+	defer cancel()
+	clients, err := awscfg.Load(ctx, profile, region)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "failed to load AWS config:", err)
 		return 1
@@ -75,7 +93,8 @@ func runTUI(profile, region string) int {
 }
 
 func runDoctor(profile, region string) int {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), loadTimeout)
+	defer cancel()
 	clients, err := awscfg.Load(ctx, profile, region)
 	var checks []preflight.Check
 	if err != nil {

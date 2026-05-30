@@ -51,6 +51,12 @@ var (
 const (
 	minWidth  = 60
 	minHeight = 12
+
+	// Detail panel sizing: target a share of the terminal width, clamped to a
+	// readable column range.
+	detailPctWidth = 38 // % of terminal width
+	detailMinCols  = 24
+	detailMaxCols  = 44
 )
 
 // View renders the UI.
@@ -84,7 +90,7 @@ func (m Model) renderSplit() string {
 	}
 	innerH := bodyH - 2 // panel top+bottom borders
 
-	detailOuter := clampInt(m.width*38/100, 24, 44)
+	detailOuter := clampInt(m.width*detailPctWidth/100, detailMinCols, detailMaxCols)
 	listOuter := m.width - detailOuter
 	listInner := listOuter - 2
 	detailInner := detailOuter - 2
@@ -268,8 +274,17 @@ func (m Model) footerBar() string {
 		if status == "" {
 			status = fmt.Sprintf("%d shown", len(m.visible))
 		}
+		statusR := dimStyle.Render(status)
+		if m.err != nil {
+			// Surface fetch failures distinctly; the list still shows the
+			// last successful result rather than blanking.
+			if len(m.visible) > 0 {
+				status += " (showing last-known)"
+			}
+			statusR = failStyle.Render(status)
+		}
 		hints := []string{"↑↓ move", "f filter", "/ search", "t toggle", "p pin", "r refresh", "⏎ connect", "? help", "q quit"}
-		return dimStyle.Render(status) + "\n" + renderHints(hints)
+		return statusR + "\n" + renderHints(hints)
 	}
 }
 

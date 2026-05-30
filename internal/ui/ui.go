@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
@@ -24,6 +25,13 @@ const (
 	modeFilter
 	modeSearch
 	modeHelp
+)
+
+// Network deadlines for background AWS work so a wedged endpoint can't leave the
+// TUI spinning forever (only escape would be ctrl+c).
+const (
+	fetchTimeout     = 30 * time.Second
+	preflightTimeout = 15 * time.Second
 )
 
 // Model is the root Bubble Tea model for lazyssm.
@@ -51,10 +59,16 @@ type Model struct {
 
 	preflight     []preflight.Check
 	showPreflight bool
+	binariesOK    bool // cached from the last preflight run; avoids re-probing on connect
+
+	fetchSeq int  // bumped per issued fetch; replies with a stale seq are dropped
+	demo     bool // LAZYSSM_DEMO: serve fixed sample data, never call AWS
 }
 
-// instancesMsg carries the result of a background inventory fetch.
+// instancesMsg carries the result of a background inventory fetch. seq ties the
+// reply to the fetch that issued it so out-of-order results can be discarded.
 type instancesMsg struct {
+	seq   int
 	items []inventory.Instance
 	err   error
 }
@@ -87,21 +101,35 @@ func New(clients awscfg.Clients, st *store.Store, profile, region string) Model 
 
 // Init kicks off the initial fetch and credential preflight.
 func (m Model) Init() tea.Cmd {
+	if m.demo {
+		return m.fetchCmd() // no AWS, no preflight in demo mode
+	}
 	return tea.Batch(m.fetchCmd(), m.preflightCmd())
 }
 
 func (m Model) fetchCmd() tea.Cmd {
+	seq := m.fetchSeq
+	if m.demo {
+		filter, src := m.filter, m.src
+		return func() tea.Msg {
+			return instancesMsg{seq: seq, items: filterDemo(demoInstances(), filter, src)}
+		}
+	}
 	clients, filter, src := m.clients, m.filter, m.src
 	return func() tea.Msg {
-		items, err := inventory.Fetch(context.Background(), clients.SSM, clients.EC2, filter, src)
-		return instancesMsg{items: items, err: err}
+		ctx, cancel := context.WithTimeout(context.Background(), fetchTimeout)
+		defer cancel()
+		items, err := inventory.Fetch(ctx, clients.SSM, clients.EC2, filter, src)
+		return instancesMsg{seq: seq, items: items, err: err}
 	}
 }
 
 func (m Model) preflightCmd() tea.Cmd {
 	p := preflight.Params{Profile: m.profile, Region: m.clients.Region(), STS: m.clients.STS}
 	return func() tea.Msg {
-		return preflightMsg{checks: preflight.Run(context.Background(), p)}
+		ctx, cancel := context.WithTimeout(context.Background(), preflightTimeout)
+		defer cancel()
+		return preflightMsg{checks: preflight.Run(ctx, p)}
 	}
 }
 
@@ -113,6 +141,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case instancesMsg:
+		if msg.seq != m.fetchSeq {
+			return m, nil // a newer fetch superseded this reply
+		}
 		m.loading = false
 		if msg.err != nil {
 			m.err = msg.err
@@ -128,6 +159,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case preflightMsg:
 		m.preflight = msg.checks
+		m.binariesOK = preflight.BinariesOKFrom(msg.checks)
 		m.showPreflight = !preflight.AllOK(msg.checks)
 		return m, nil
 
@@ -159,6 +191,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.showPreflight {
 		switch key {
 		case "r":
+			m.fetchSeq++
 			m.loading = true
 			return m, tea.Batch(m.preflightCmd(), m.fetchCmd())
 		case "esc", "q", "enter":
@@ -195,6 +228,7 @@ func (m Model) keyList(key string) (tea.Model, tea.Cmd) {
 	case "?":
 		m.mode = modeHelp
 	case "r":
+		m.fetchSeq++
 		m.loading = true
 		m.status = "refreshing…"
 		return m, m.fetchCmd()
@@ -206,6 +240,7 @@ func (m Model) keyList(key string) (tea.Model, tea.Cmd) {
 			m.src = inventory.SourceSSMOnly
 			m.status = "source: SSM only"
 		}
+		m.fetchSeq++
 		m.loading = true
 		return m, m.fetchCmd()
 	case "p":
@@ -231,11 +266,17 @@ func (m Model) keyFilter(msg tea.KeyPressMsg, key string) (tea.Model, tea.Cmd) {
 		m.filterInput.Blur()
 		return m, nil
 	case "enter":
-		m.filter = parseFilter(m.filterInput.Value())
+		f, ignored := parseFilter(m.filterInput.Value())
+		m.filter = f
 		m.mode = modeList
 		m.filterInput.Blur()
+		m.fetchSeq++
 		m.loading = true
-		m.status = "filtering…"
+		if len(ignored) > 0 {
+			m.status = "ignored: " + strings.Join(ignored, " ")
+		} else {
+			m.status = "filtering…"
+		}
 		return m, m.fetchCmd()
 	}
 	var cmd tea.Cmd
@@ -311,13 +352,21 @@ func (m Model) connect() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	inst := m.visible[m.cursor]
+	if m.demo {
+		m.status = "demo: would connect to " + inst.InstanceID
+		return m, nil
+	}
 	if !inst.SSMReady {
 		m.status = inst.InstanceID + " is not SSM-ready (no online agent)"
 		return m, nil
 	}
-	if !preflight.BinariesOK() {
+	if !m.binariesOK {
+		// Use the cached preflight; if it hasn't run yet, kick one off to
+		// populate the modal instead of blocking the UI thread re-probing.
 		m.showPreflight = true
-		m.preflight = preflight.CheckBinaries()
+		if len(m.preflight) == 0 {
+			return m, m.preflightCmd()
+		}
 		return m, nil
 	}
 	m.status = "connecting to " + inst.InstanceID + "…"

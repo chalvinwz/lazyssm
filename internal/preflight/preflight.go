@@ -8,11 +8,13 @@ package preflight
 
 import (
 	"context"
+	"errors"
 	"os/exec"
 	"runtime"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/aws/smithy-go"
 )
 
 const (
@@ -24,6 +26,9 @@ const (
 type Check struct {
 	Name string
 	OK   bool
+	// Binary marks checks that probe an external binary (aws CLI, plugin), so a
+	// cached result set can be reused without re-spawning subprocesses.
+	Binary bool
 	// Detail describes the resolved state when OK, or the problem when not.
 	Detail string
 	// Fix is actionable guidance shown when OK is false.
@@ -44,7 +49,7 @@ type Params struct {
 
 // binaryCheck verifies a binary is on PATH and runnable via a version probe.
 func binaryCheck(name, docURL, brew string) Check {
-	c := Check{Name: name}
+	c := Check{Name: name, Binary: true}
 	path, err := exec.LookPath(name)
 	if err != nil {
 		c.Detail = "not found on PATH"
@@ -93,10 +98,11 @@ func CheckBinaries() []Check {
 	return []Check{CheckAWSCLI(), CheckPlugin()}
 }
 
-// BinariesOK reports whether both required binaries pass.
-func BinariesOK() bool {
-	for _, c := range CheckBinaries() {
-		if !c.OK {
+// BinariesOKFrom reports whether every binary check in an already-run result
+// set passed, letting callers reuse a cached preflight instead of re-probing.
+func BinariesOKFrom(checks []Check) bool {
+	for _, c := range checks {
+		if c.Binary && !c.OK {
 			return false
 		}
 	}
@@ -145,8 +151,17 @@ func CheckRegion(region string) Check {
 	return Check{Name: "AWS region", OK: true, Detail: region}
 }
 
-// isSSOExpired heuristically detects an expired/invalid SSO token from an error.
+// isSSOExpired detects an expired/invalid SSO token from an error. It prefers
+// the typed AWS error code when present and falls back to a text heuristic for
+// credential-chain errors that aren't surfaced as smithy APIErrors.
 func isSSOExpired(err error) bool {
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.ErrorCode() {
+		case "ExpiredToken", "ExpiredTokenException":
+			return true
+		}
+	}
 	s := strings.ToLower(err.Error())
 	if !strings.Contains(s, "sso") && !strings.Contains(s, "token") {
 		return false

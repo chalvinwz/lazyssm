@@ -13,6 +13,12 @@ backed by AWS SSM instead of `~/.ssh/config`. No bastion host, no open port
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
+![lazyssm demo](docs/demo.gif)
+
+> Demo recorded with [VHS](https://github.com/charmbracelet/vhs) from
+> [`demo/lazyssm.tape`](demo/lazyssm.tape) using built-in demo data
+> (`LAZYSSM_DEMO=1`) — no AWS account required. Re-record with `vhs demo/lazyssm.tape`.
+
 ---
 
 ## Why
@@ -154,7 +160,9 @@ tag:Env=prod web-
 tag:Env=prod tag:Team=platform name:api-
 ```
 
-Press `Enter` to apply, `Esc` to cancel.
+Press `Enter` to apply, `Esc` to cancel. Tokens that can't be parsed (for
+example `tag:Key` with no `=value`) are reported in the status line and skipped
+rather than silently dropped.
 
 ### Client-side fuzzy search (`/`)
 
@@ -299,7 +307,8 @@ go test ./...
 ```
 
 The test suite covers the filter parser (`internal/ui`), fuzzy search
-behaviour (`internal/ui`), inventory merge logic (`internal/inventory`),
+behaviour (`internal/ui`), the TUI `Update` state machine (`internal/ui`),
+inventory merge logic and context-deadline handling (`internal/inventory`),
 preflight checks (`internal/preflight`), the pin store (`internal/store`), and
 session argument construction (`internal/session`).
 
@@ -307,7 +316,8 @@ session argument construction (`internal/session`).
 
 GitHub Actions runs on every push to `main` and every pull request:
 
-- `test` — `gofmt` check, `go vet ./...`, `go test -race` with coverage
+- `test` — `gofmt` check, `go vet ./...`, `go test -race` with coverage; prints a
+  coverage summary and uploads `coverage.out` as a build artifact
 - `lint` — `golangci-lint`
 - `govulncheck` — scans for reachable vulnerabilities in dependencies
 - `build` matrix — `linux`, `darwin`, `windows` × `amd64`, `arm64`
