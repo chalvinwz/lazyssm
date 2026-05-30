@@ -7,6 +7,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	"github.com/aws/smithy-go"
 )
 
 func TestIsSSOExpired(t *testing.T) {
@@ -21,6 +22,29 @@ func TestIsSSOExpired(t *testing.T) {
 		if got := isSSOExpired(errors.New(msg)); got != want {
 			t.Errorf("isSSOExpired(%q) = %v, want %v", msg, got, want)
 		}
+	}
+}
+
+func TestIsSSOExpiredTypedCode(t *testing.T) {
+	// A typed AWS error is detected by code even without SSO wording in the text.
+	err := &smithy.GenericAPIError{Code: "ExpiredToken", Message: "the security token included in the request is expired"}
+	if !isSSOExpired(err) {
+		t.Error("ExpiredToken APIError should be detected")
+	}
+	other := &smithy.GenericAPIError{Code: "AccessDeniedException", Message: "not authorized"}
+	if isSSOExpired(other) {
+		t.Error("AccessDeniedException should not be treated as SSO-expired")
+	}
+}
+
+func TestBinariesOKFrom(t *testing.T) {
+	ok := []Check{{Name: "aws CLI", Binary: true, OK: true}, {Name: "plugin", Binary: true, OK: true}, {Name: "region", OK: false}}
+	if !BinariesOKFrom(ok) {
+		t.Error("binary checks all pass -> true (non-binary failures ignored)")
+	}
+	bad := []Check{{Name: "aws CLI", Binary: true, OK: false}, {Name: "plugin", Binary: true, OK: true}}
+	if BinariesOKFrom(bad) {
+		t.Error("a failed binary check -> false")
 	}
 }
 

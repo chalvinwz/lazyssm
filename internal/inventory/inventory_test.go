@@ -2,7 +2,9 @@ package inventory
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -173,6 +175,23 @@ func TestFetchPaginatesSSMAndPassesFilters(t *testing.T) {
 	}
 	if *efake.gotInput.Filters[0].Name != "tag:Name" {
 		t.Errorf("want tag:Name filter, got %v", *efake.gotInput.Filters[0].Name)
+	}
+}
+
+// blockingSSM blocks until the context is cancelled, simulating a hung endpoint.
+type blockingSSM struct{}
+
+func (blockingSSM) DescribeInstanceInformation(ctx context.Context, _ *ssm.DescribeInstanceInformationInput, _ ...func(*ssm.Options)) (*ssm.DescribeInstanceInformationOutput, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestFetchRespectsContextDeadline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	_, err := Fetch(ctx, blockingSSM{}, &fakeEC2{out: &ec2.DescribeInstancesOutput{}}, Filter{}, SourceSSMOnly)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("want context.DeadlineExceeded, got %v", err)
 	}
 }
 
