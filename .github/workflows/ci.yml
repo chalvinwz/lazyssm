@@ -46,6 +46,7 @@ jobs:
 
   build:
     needs: [test, lint, govulncheck]
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     strategy:
       matrix:
