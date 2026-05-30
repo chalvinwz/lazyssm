@@ -2,6 +2,7 @@ package ui
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"charm.land/bubbles/v2/textinput"
@@ -48,5 +49,15 @@ func TestRenderSnapshot(t *testing.T) {
 		if mm.render() == "" {
 			t.Errorf("empty render (no instances) at %dx%d", sz[0], sz[1])
 		}
+	}
+}
+
+// TestRenderEmptyListShowsPrompt asserts the empty-list content (not just that
+// the frame is non-empty): with no instances the list panel guides the user.
+func TestRenderEmptyListShowsPrompt(t *testing.T) {
+	m := newTestModel(t) // 96x20 -> renderSplit; no instances loaded
+	out := m.render()
+	if !strings.Contains(out, "no instances") {
+		t.Fatalf("empty list should prompt to filter/toggle source, got:\n%s", out)
 	}
 }
