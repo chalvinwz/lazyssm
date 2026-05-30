@@ -1,0 +1,8 @@
+/bin/
+/dist/
+*.out
+.DS_Store
+
+# Local tooling and spec drafts — not published
+/.claude/
+/openspec/

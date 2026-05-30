@@ -1,0 +1,16 @@
+version: "2"
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - misspell
+    - revive
+  exclusions:
+    rules:
+      # session.SessionEndedMsg is an established public type; renaming to
+      # drop the stutter would be a breaking API change, out of scope here.
+      - linters: [revive]
+        text: stutters
