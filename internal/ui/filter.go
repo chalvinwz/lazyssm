@@ -13,9 +13,10 @@ import (
 // Tokens:
 //   - "tag:Key=Value"  -> tag constraint
 //   - "name:prefix"    -> Name prefix
-//   - bare "prefix"     -> Name prefix (last bare token wins)
+//   - bare "prefix"     -> Name prefix (last one wins; shadowed ones reported)
 //
-// A "tag:" token without "=Value" (or with an empty key) is reported as ignored.
+// A "tag:" token without "=Value" (or with an empty key), and any Name prefix
+// shadowed by a later one, are reported as ignored.
 //
 // Example: "tag:Env=prod web-" -> Tags{Env:prod}, NamePrefix "web-".
 func parseFilter(s string) (inventory.Filter, []string) {
@@ -31,8 +32,14 @@ func parseFilter(s string) (inventory.Filter, []string) {
 				ignored = append(ignored, tok)
 			}
 		case strings.HasPrefix(tok, "name:"):
+			if f.NamePrefix != "" {
+				ignored = append(ignored, f.NamePrefix) // shadowed by this token
+			}
 			f.NamePrefix = strings.TrimPrefix(tok, "name:")
 		default:
+			if f.NamePrefix != "" {
+				ignored = append(ignored, f.NamePrefix) // shadowed by this token
+			}
 			f.NamePrefix = tok
 		}
 	}

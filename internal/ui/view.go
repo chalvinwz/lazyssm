@@ -232,8 +232,7 @@ func (m Model) detailContent(w, h int) string {
 		}
 		lines = append(lines, detailKey.Render(padRight(k, 7))+detailValue.Render(truncate(v, w-7)))
 	}
-	add("ssm", "")
-	lines[len(lines)-1] = detailKey.Render(padRight("ssm", 7)) + readiness
+	lines = append(lines, detailKey.Render(padRight("ssm", 7))+readiness)
 	add("ping", ping)
 	add("state", in.State)
 	add("ip", in.IP)

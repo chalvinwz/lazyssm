@@ -50,3 +50,13 @@ func TestParseFilterReportsIgnored(t *testing.T) {
 		t.Errorf("valid bare token should still apply, got %q", f.NamePrefix)
 	}
 }
+
+func TestParseFilterReportsShadowedNamePrefix(t *testing.T) {
+	f, ignored := parseFilter("web- api-") // second bare token shadows the first
+	if f.NamePrefix != "api-" {
+		t.Errorf("last bare token should win, got %q", f.NamePrefix)
+	}
+	if len(ignored) != 1 || ignored[0] != "web-" {
+		t.Errorf("want [web-] reported as shadowed, got %v", ignored)
+	}
+}
