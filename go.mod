@@ -11,7 +11,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.304.2
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.68.8
 	github.com/aws/aws-sdk-go-v2/service/sts v1.42.3
-	github.com/aws/smithy-go v1.26.0
+	github.com/aws/smithy-go v1.27.2
 	github.com/sahilm/fuzzy v0.1.2
 	gopkg.in/yaml.v3 v3.0.1
 )
