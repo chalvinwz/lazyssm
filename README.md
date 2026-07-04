@@ -105,6 +105,9 @@ lazyssm
 # Explicit profile and region
 lazyssm --profile prod --region eu-west-1
 
+# Re-run `aws sso login` automatically when the SSO session expires
+lazyssm --profile prod --auto-login
+
 # Run environment preflight checks
 lazyssm doctor
 lazyssm --profile staging doctor
@@ -115,11 +118,12 @@ lazyssm --version
 
 ### Flags
 
-| Flag        | Default           | Description                              |
-| ----------- | ----------------- | ---------------------------------------- |
-| `--profile` | (AWS default)     | AWS profile; overrides `AWS_PROFILE`     |
-| `--region`  | (AWS default)     | AWS region; overrides `AWS_REGION`       |
-| `--version` | —                 | Print version string and exit            |
+| Flag           | Default           | Description                                              |
+| -------------- | ----------------- | -------------------------------------------------------- |
+| `--profile`    | (AWS default)     | AWS profile; overrides `AWS_PROFILE`                     |
+| `--region`     | (AWS default)     | AWS region; overrides `AWS_REGION`                       |
+| `--auto-login` | off               | Run `aws sso login` automatically on SSO session expiry  |
+| `--version`    | —                 | Print version string and exit                            |
 
 ### Making a profile permanent
 
@@ -225,6 +229,25 @@ session, refresh it with:
 ```sh
 aws sso login --profile <profile>
 ```
+
+### Automatic SSO login
+
+With `--auto-login`, lazyssm handles the expired session itself: when the
+startup credential check or an inventory refresh fails because the SSO session
+is expired, the TUI suspends, hands the terminal to `aws sso login` (passing
+your `--profile`/`--region`; with no `--profile`, the aws CLI honors
+`AWS_PROFILE`), and resumes with a fresh fetch once the browser flow completes.
+
+To enable it permanently, add it to the config file instead of the flag:
+
+```yaml
+# ~/.config/lazyssm/config.yaml (macOS: ~/Library/Application Support/lazyssm/config.yaml)
+auto_login: true
+```
+
+One login attempt is made per expiry: if credentials still fail afterwards
+(login cancelled, wrong profile), the preflight screen appears as usual instead
+of looping. `lazyssm doctor` never auto-logins — it only reports.
 
 ---
 

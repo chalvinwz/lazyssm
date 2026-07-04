@@ -36,11 +36,7 @@ func (f Filter) Active() bool {
 
 // String renders the filter back into filter-bar syntax (tag:K=V … prefix).
 func (f Filter) String() string {
-	keys := make([]string, 0, len(f.Tags))
-	for k := range f.Tags {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
+	keys := sortedKeys(f.Tags)
 	parts := make([]string, 0, len(keys)+1)
 	for _, k := range keys {
 		parts = append(parts, "tag:"+k+"="+f.Tags[k])
@@ -96,15 +92,22 @@ type EC2API interface {
 	DescribeInstances(ctx context.Context, in *ec2.DescribeInstancesInput, optFns ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error)
 }
 
-// buildEC2Filters translates a Filter into EC2 DescribeInstances filters.
-func buildEC2Filters(f Filter) []ec2types.Filter {
-	var out []ec2types.Filter
-	// Deterministic order for stable requests/tests.
-	keys := make([]string, 0, len(f.Tags))
-	for k := range f.Tags {
+// sortedKeys returns a map's keys in stable sorted order, for deterministic
+// rendering and request building.
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
+	return keys
+}
+
+// buildEC2Filters translates a Filter into EC2 DescribeInstances filters.
+func buildEC2Filters(f Filter) []ec2types.Filter {
+	// Deterministic order for stable requests/tests.
+	keys := sortedKeys(f.Tags)
+	out := make([]ec2types.Filter, 0, len(keys)+1)
 	for _, k := range keys {
 		out = append(out, ec2types.Filter{
 			Name:   aws.String("tag:" + k),
@@ -131,7 +134,11 @@ func merge(ssmNodes []ssmNode, ec2Insts []ec2Inst, src Source, filterActive bool
 		ec2ByID[e.ID] = e
 	}
 
-	var out []Instance
+	capHint := len(ssmNodes)
+	if src == SourceAllEC2 {
+		capHint = len(ec2Insts)
+	}
+	out := make([]Instance, 0, capHint)
 	switch src {
 	case SourceAllEC2:
 		for _, e := range ec2Insts {

@@ -61,6 +61,10 @@ type Model struct {
 	showPreflight bool
 	binariesOK    bool // cached from the last preflight run; avoids re-probing on connect
 
+	autoLogin      bool // effective --auto-login (flag OR persisted config)
+	loginInFlight  bool // `aws sso login` currently running via ExecProcess
+	loginAttempted bool // the single attempt for the current expiry event is spent
+
 	fetchSeq int  // bumped per issued fetch; replies with a stale seq are dropped
 	demo     bool // LAZYSSM_DEMO: serve fixed sample data, never call AWS
 }
@@ -79,7 +83,7 @@ type preflightMsg struct {
 }
 
 // New constructs the root model.
-func New(clients awscfg.Clients, st *store.Store, profile, region string) Model {
+func New(clients awscfg.Clients, st *store.Store, profile, region string, autoLogin bool) Model {
 	fi := textinput.New()
 	fi.SetVirtualCursor(true)
 	fi.SetWidth(48)
@@ -91,6 +95,7 @@ func New(clients awscfg.Clients, st *store.Store, profile, region string) Model 
 		profile:     profile,
 		region:      region,
 		store:       st,
+		autoLogin:   autoLogin,
 		src:         inventory.SourceSSMOnly,
 		mode:        modeList,
 		loading:     true,
@@ -133,6 +138,22 @@ func (m Model) preflightCmd() tea.Cmd {
 	}
 }
 
+// tryAutoLogin returns a LoginCmd when auto-login should fire for an SSO
+// expiry, spending the single attempt for the current expiry event. It returns
+// nil when disabled, in demo mode, the attempt is spent, or a login is already
+// in flight. Update is single-threaded, so spending the attempt before the cmd
+// runs keeps the guard race-free even when preflight and fetch both report
+// expiry in the same batch.
+func (m *Model) tryAutoLogin() tea.Cmd {
+	if !m.autoLogin || m.demo || m.loginAttempted || m.loginInFlight {
+		return nil
+	}
+	m.loginAttempted = true
+	m.loginInFlight = true
+	m.status = "SSO session expired — running aws sso login…"
+	return session.LoginCmd(m.profile, m.region)
+}
+
 // Update handles messages.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -148,9 +169,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.err = msg.err
 			m.status = "fetch error: " + msg.err.Error()
+			if preflight.IsSSOExpired(msg.err) {
+				if cmd := m.tryAutoLogin(); cmd != nil {
+					return m, cmd
+				}
+			}
 			return m, nil
 		}
 		m.err = nil
+		m.loginAttempted = false // a successful AWS call proves the expiry event is over
 		m.applyPins(msg.items)
 		m.all = msg.items
 		m.recompute()
@@ -160,8 +187,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case preflightMsg:
 		m.preflight = msg.checks
 		m.binariesOK = preflight.BinariesOKFrom(msg.checks)
+		if m.loginInFlight {
+			// Result predates the suspended login; LoginEndedMsg re-runs preflight.
+			return m, nil
+		}
+		if !preflight.SSOExpiredFrom(msg.checks) {
+			m.loginAttempted = false // expiry resolved; a later expiry gets a fresh attempt
+		} else if cmd := m.tryAutoLogin(); cmd != nil {
+			m.showPreflight = false // don't render the modal over the login handover
+			return m, cmd
+		}
 		m.showPreflight = !preflight.AllOK(msg.checks)
 		return m, nil
+
+	case session.LoginEndedMsg:
+		m.loginInFlight = false
+		if msg.Err != nil {
+			m.status = "sso login failed: " + msg.Err.Error()
+		} else {
+			m.status = "sso login finished — re-checking credentials…"
+		}
+		// Re-verify and refetch regardless of outcome; loginAttempted stays
+		// spent, so a still-broken identity opens the modal instead of looping.
+		m.fetchSeq++
+		m.loading = true
+		return m, tea.Batch(m.preflightCmd(), m.fetchCmd())
 
 	case session.SessionEndedMsg:
 		if msg.Err != nil {

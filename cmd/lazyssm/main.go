@@ -26,6 +26,7 @@ const loadTimeout = 15 * time.Second
 func main() {
 	profile := flag.String("profile", "", "AWS profile to use (overrides AWS_PROFILE)")
 	region := flag.String("region", "", "AWS region to use (overrides AWS_REGION)")
+	autoLogin := flag.Bool("auto-login", false, "run 'aws sso login' automatically when the SSO session is expired")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Usage = usage
 	flag.Parse()
@@ -39,7 +40,7 @@ func main() {
 	case "doctor":
 		os.Exit(runDoctor(*profile, *region))
 	case "", "tui":
-		os.Exit(runTUI(*profile, *region))
+		os.Exit(runTUI(*profile, *region, *autoLogin))
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n\n", flag.Arg(0))
 		usage()
@@ -55,12 +56,13 @@ Usage:
   lazyssm [--profile P] [--region R] doctor   run environment checks
 
 Flags:
-  --profile  AWS profile (overrides AWS_PROFILE)
-  --region   AWS region (overrides AWS_REGION)
+  --profile     AWS profile (overrides AWS_PROFILE)
+  --region      AWS region (overrides AWS_REGION)
+  --auto-login  run 'aws sso login' automatically when the SSO session is expired
 `)
 }
 
-func runTUI(profile, region string) int {
+func runTUI(profile, region string, autoLogin bool) int {
 	// Demo mode (LAZYSSM_DEMO=1) serves fixed sample data without touching AWS,
 	// for recording screenshots/GIFs.
 	if os.Getenv("LAZYSSM_DEMO") != "" {
@@ -84,7 +86,7 @@ func runTUI(profile, region string) int {
 		fmt.Fprintln(os.Stderr, "warning: could not load local store:", err)
 		st, _ = store.LoadFrom("") // in-memory fallback
 	}
-	m := ui.New(clients, st, profile, region)
+	m := ui.New(clients, st, profile, region, autoLogin || st.AutoLogin)
 	if _, err := tea.NewProgram(m).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1

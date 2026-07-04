@@ -1,12 +1,14 @@
 package ui
 
 import (
+	"errors"
 	"testing"
 
 	"charm.land/bubbles/v2/textinput"
 
 	"github.com/chalvinwz/lazyssm/internal/inventory"
 	"github.com/chalvinwz/lazyssm/internal/preflight"
+	"github.com/chalvinwz/lazyssm/internal/session"
 	"github.com/chalvinwz/lazyssm/internal/store"
 )
 
@@ -163,6 +165,156 @@ func TestTogglePinReSorts(t *testing.T) {
 	}
 	if m2.visible[0].InstanceID != id {
 		t.Errorf("pinned %s should sort first, got %s", id, m2.visible[0].InstanceID)
+	}
+}
+
+// expiredChecks is a preflight result whose identity check failed on SSO expiry.
+func expiredChecks() []preflight.Check {
+	return []preflight.Check{
+		{Name: "aws CLI", Binary: true, OK: true},
+		{Name: "session-manager-plugin", Binary: true, OK: true},
+		{Name: "AWS region", OK: true},
+		{Name: "AWS identity", OK: false, SSOExpired: true},
+	}
+}
+
+func healthyChecks() []preflight.Check {
+	return []preflight.Check{
+		{Name: "aws CLI", Binary: true, OK: true},
+		{Name: "session-manager-plugin", Binary: true, OK: true},
+		{Name: "AWS region", OK: true},
+		{Name: "AWS identity", OK: true},
+	}
+}
+
+// The returned tea.Cmd is only checked for nil-ness, never invoked — invoking
+// it would exec `aws sso login`. Constructing it is side-effect free.
+
+func TestAutoLoginFiresOnPreflightExpiry(t *testing.T) {
+	m := newTestModel(t)
+	m.autoLogin = true
+	nm, cmd := m.Update(preflightMsg{checks: expiredChecks()})
+	m2 := nm.(Model)
+	if cmd == nil {
+		t.Fatal("expired preflight with auto-login should return a login cmd")
+	}
+	if !m2.loginAttempted || !m2.loginInFlight {
+		t.Errorf("guard state: attempted=%v inFlight=%v, want both true", m2.loginAttempted, m2.loginInFlight)
+	}
+	if m2.showPreflight {
+		t.Error("modal should be suppressed during the login handover")
+	}
+}
+
+func TestAutoLoginSpendsOneAttempt(t *testing.T) {
+	m := newTestModel(t)
+	m.autoLogin = true
+	m.loginAttempted = true // attempt already spent for this expiry event
+	nm, cmd := m.Update(preflightMsg{checks: expiredChecks()})
+	m2 := nm.(Model)
+	if cmd != nil {
+		t.Fatal("second expired preflight should not fire another login")
+	}
+	if !m2.showPreflight {
+		t.Error("spent attempt should fall back to the preflight modal")
+	}
+}
+
+func TestAutoLoginGuardResetsOnHealthyPreflight(t *testing.T) {
+	m := newTestModel(t)
+	m.autoLogin = true
+	m.loginAttempted = true
+
+	nm, _ := m.Update(preflightMsg{checks: healthyChecks()})
+	m2 := nm.(Model)
+	if m2.loginAttempted {
+		t.Fatal("healthy preflight should reset the attempt guard")
+	}
+
+	// A later expiry gets a fresh attempt.
+	nm2, cmd := m2.Update(preflightMsg{checks: expiredChecks()})
+	if cmd == nil {
+		t.Error("a later expiry after recovery should fire auto-login again")
+	}
+	if !nm2.(Model).loginAttempted {
+		t.Error("fresh attempt should be spent")
+	}
+}
+
+func TestAutoLoginFiresOnFetchSSOError(t *testing.T) {
+	m := newTestModel(t)
+	m.autoLogin = true
+	nm, cmd := m.Update(instancesMsg{seq: 0, err: errors.New("the SSO session associated with this profile has expired")})
+	m2 := nm.(Model)
+	if cmd == nil {
+		t.Fatal("SSO-expired fetch error should fire auto-login")
+	}
+	if !m2.loginAttempted || !m2.loginInFlight {
+		t.Errorf("guard state: attempted=%v inFlight=%v, want both true", m2.loginAttempted, m2.loginInFlight)
+	}
+
+	// Generic fetch errors must not trigger a login.
+	m = newTestModel(t)
+	m.autoLogin = true
+	if _, cmd := m.Update(instancesMsg{seq: 0, err: errors.New("RequestLimitExceeded")}); cmd != nil {
+		t.Error("generic fetch error should not fire auto-login")
+	}
+}
+
+func TestAutoLoginDisabledOrDemoNeverFires(t *testing.T) {
+	m := newTestModel(t) // autoLogin false
+	if _, cmd := m.Update(preflightMsg{checks: expiredChecks()}); cmd != nil {
+		t.Error("auto-login disabled: no cmd expected")
+	}
+
+	m = newTestModel(t)
+	m.autoLogin = true
+	m.demo = true
+	if _, cmd := m.Update(preflightMsg{checks: expiredChecks()}); cmd != nil {
+		t.Error("demo mode: no cmd expected")
+	}
+}
+
+func TestLoginEndedRerunsPreflightAndFetch(t *testing.T) {
+	m := newTestModel(t)
+	m.autoLogin = true
+	m.loginAttempted = true
+	m.loginInFlight = true
+	nm, cmd := m.Update(session.LoginEndedMsg{})
+	m2 := nm.(Model)
+	if m2.loginInFlight {
+		t.Error("loginInFlight should clear when the login exits")
+	}
+	if !m2.loginAttempted {
+		t.Error("the attempt stays spent until identity recovers")
+	}
+	if m2.fetchSeq != 1 || !m2.loading || cmd == nil {
+		t.Errorf("re-verify: seq=%d loading=%v cmd!=nil=%v", m2.fetchSeq, m2.loading, cmd != nil)
+	}
+}
+
+func TestStalePreflightIgnoredWhileLoginInFlight(t *testing.T) {
+	m := newTestModel(t)
+	m.autoLogin = true
+	m.loginAttempted = true
+	m.loginInFlight = true
+	nm, cmd := m.Update(preflightMsg{checks: expiredChecks()})
+	m2 := nm.(Model)
+	if cmd != nil {
+		t.Error("no cmd while a login is suspended")
+	}
+	if m2.showPreflight {
+		t.Error("stale expired preflight should not open the modal over the login")
+	}
+}
+
+func TestFetchSuccessResetsLoginAttempt(t *testing.T) {
+	m := newTestModel(t)
+	m.autoLogin = true
+	m.loginAttempted = true
+	nm, _ := m.Update(instancesMsg{seq: 0, items: sampleInstances()})
+	if nm.(Model).loginAttempted {
+		t.Error("a successful fetch proves the expiry event is over; guard should reset")
 	}
 }
 

@@ -29,6 +29,9 @@ type Check struct {
 	// Binary marks checks that probe an external binary (aws CLI, plugin), so a
 	// cached result set can be reused without re-spawning subprocesses.
 	Binary bool
+	// SSOExpired marks an identity failure caused by an expired/invalid SSO
+	// session, so callers can trigger auto-login without matching Detail text.
+	SSOExpired bool
 	// Detail describes the resolved state when OK, or the problem when not.
 	Detail string
 	// Fix is actionable guidance shown when OK is false.
@@ -47,17 +50,24 @@ type Params struct {
 	STS     STSAPI
 }
 
+// Seams over os/exec so the binary-probe path is unit-testable without real
+// binaries on PATH. Tests swap these and restore them with defer.
+var (
+	lookPath   = exec.LookPath
+	runVersion = func(name string) error { return exec.Command(name, "--version").Run() }
+)
+
 // binaryCheck verifies a binary is on PATH and runnable via a version probe.
 func binaryCheck(name, docURL, brew string) Check {
 	c := Check{Name: name, Binary: true}
-	path, err := exec.LookPath(name)
+	path, err := lookPath(name)
 	if err != nil {
 		c.Detail = "not found on PATH"
 		c.Fix = installFix(name, docURL, brew)
 		return c
 	}
 	// Probe runnability; presence alone is not enough.
-	if err := exec.Command(name, "--version").Run(); err != nil {
+	if err := runVersion(name); err != nil {
 		c.Detail = "found at " + path + " but failed to run"
 		c.Fix = installFix(name, docURL, brew)
 		return c
@@ -109,6 +119,17 @@ func BinariesOKFrom(checks []Check) bool {
 	return true
 }
 
+// SSOExpiredFrom reports whether any check in an already-run result set failed
+// because of an expired SSO session.
+func SSOExpiredFrom(checks []Check) bool {
+	for _, c := range checks {
+		if c.SSOExpired {
+			return true
+		}
+	}
+	return false
+}
+
 // CheckIdentity validates that credentials resolve to a usable identity via
 // sts:GetCallerIdentity, distinguishing an expired SSO session from a generic
 // credentials failure.
@@ -121,7 +142,8 @@ func CheckIdentity(ctx context.Context, p Params) Check {
 	}
 	out, err := p.STS.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
 	if err != nil {
-		if isSSOExpired(err) {
+		if IsSSOExpired(err) {
+			c.SSOExpired = true
 			c.Detail = "SSO session expired or invalid"
 			c.Fix = "aws sso login" + profileSuffix(p.Profile)
 			return c
@@ -151,10 +173,11 @@ func CheckRegion(region string) Check {
 	return Check{Name: "AWS region", OK: true, Detail: region}
 }
 
-// isSSOExpired detects an expired/invalid SSO token from an error. It prefers
+// IsSSOExpired detects an expired/invalid SSO token from an error. It prefers
 // the typed AWS error code when present and falls back to a text heuristic for
-// credential-chain errors that aren't surfaced as smithy APIErrors.
-func isSSOExpired(err error) bool {
+// credential-chain errors that aren't surfaced as smithy APIErrors. Exported so
+// the UI can classify mid-session fetch errors, not just preflight failures.
+func IsSSOExpired(err error) bool {
 	var apiErr smithy.APIError
 	if errors.As(err, &apiErr) {
 		switch apiErr.ErrorCode() {
@@ -165,6 +188,12 @@ func isSSOExpired(err error) bool {
 	s := strings.ToLower(err.Error())
 	if !strings.Contains(s, "sso") && !strings.Contains(s, "token") {
 		return false
+	}
+	// A missing/unreadable cached SSO token (e.g. after `aws sso logout`
+	// removes the cache file) needs the same remedy as an expired one.
+	if strings.Contains(s, "sso") &&
+		(strings.Contains(s, "no such file") || strings.Contains(s, "failed to read")) {
+		return true
 	}
 	return strings.Contains(s, "expired") ||
 		strings.Contains(s, "invalid") ||

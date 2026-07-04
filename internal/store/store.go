@@ -18,6 +18,10 @@ const fileName = "config.yaml"
 // Store holds persisted state. Pinned is the set of pinned instance IDs.
 type Store struct {
 	Pinned []string `yaml:"pinned"`
+	// AutoLogin persistently enables running `aws sso login` when the SSO
+	// session expires (equivalent to the --auto-login flag). omitempty keeps
+	// pin-toggle saves from injecting the key into configs that never set it.
+	AutoLogin bool `yaml:"auto_login,omitempty"`
 
 	path   string          // resolved file path; empty when in-memory only
 	pinSet map[string]bool // derived index
@@ -55,7 +59,6 @@ func LoadFrom(path string) (*Store, error) {
 	if err := yaml.Unmarshal(data, s); err != nil {
 		return nil, err
 	}
-	s.path = path
 	s.reindex()
 	return s, nil
 }
@@ -95,16 +98,35 @@ func (s *Store) rebuildList() {
 }
 
 // Save writes the store to its path, creating parent directories as needed.
+// The write is atomic: data goes to a temp file in the same directory and is
+// renamed into place, so a crash or full disk mid-write can't truncate an
+// existing config and lose pins.
 func (s *Store) Save() error {
 	if s.path == "" {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
+	dir := filepath.Dir(s.path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 	data, err := yaml.Marshal(s)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.path, data, 0o644)
+	tmp, err := os.CreateTemp(dir, ".config-*.yaml")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(tmp.Name()) }() // no-op once renamed
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), s.path) // atomic on POSIX
 }
