@@ -50,6 +50,11 @@ jobs:
         with:
           go-version-file: "go.mod"
       - uses: golang/govulncheck-action@v1
+        with:
+          # The job checks out above; the action's embedded checkout (an old
+          # pinned version) fails against the git config newer checkout
+          # releases leave behind.
+          repo-checkout: false
 
   build:
     needs: [test, lint, govulncheck]
