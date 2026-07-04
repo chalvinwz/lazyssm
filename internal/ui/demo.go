@@ -21,7 +21,7 @@ func NewDemo(profile, region string) Model {
 		profile = "demo"
 	}
 	st, _ := store.LoadFrom("") // in-memory; no disk writes
-	m := New(awscfg.Clients{Cfg: aws.Config{Region: region}}, st, profile, region)
+	m := New(awscfg.Clients{Cfg: aws.Config{Region: region}}, st, profile, region, false)
 	m.demo = true
 	m.binariesOK = true // skip the preflight modal in demo mode
 	return m

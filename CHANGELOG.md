@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `--auto-login` flag (and persistent `auto_login: true` config option) — when
+  the SSO session is expired at startup or during an inventory refresh, lazyssm
+  suspends the TUI, runs `aws sso login` with the active profile/region, and
+  resumes with a fresh fetch. One attempt per expiry; on failure the preflight
+  screen appears as before ([#18]).
+
 ### Fixed
 
 - A Name prefix in the filter bar that is shadowed by a later token is now
@@ -77,3 +85,4 @@ Initial public release.
 [#3]: https://github.com/chalvinwz/lazyssm/pull/3
 [#4]: https://github.com/chalvinwz/lazyssm/pull/4
 [#5]: https://github.com/chalvinwz/lazyssm/pull/5
+[#18]: https://github.com/chalvinwz/lazyssm/issues/18

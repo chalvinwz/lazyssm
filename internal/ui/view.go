@@ -364,6 +364,10 @@ func (m Model) renderPreflight() string {
 		}
 	}
 	b.WriteString("\n")
+	if m.autoLogin && m.loginAttempted {
+		b.WriteString(faintStyle.Render("  auto-login was attempted and credentials still fail — fix manually, then press r"))
+		b.WriteString("\n\n")
+	}
 	b.WriteString(keyStyle.Render("r") + faintStyle.Render(" re-check · ") +
 		keyStyle.Render("esc/enter") + faintStyle.Render(" dismiss · ") +
 		keyStyle.Render("ctrl+c") + faintStyle.Render(" quit"))
