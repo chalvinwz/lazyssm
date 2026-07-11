@@ -10,7 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.32.27
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.312.0
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.69.5
-	github.com/aws/aws-sdk-go-v2/service/sts v1.43.5
+	github.com/aws/aws-sdk-go-v2/service/sts v1.44.0
 	github.com/aws/smithy-go v1.27.3
 	github.com/sahilm/fuzzy v0.1.3
 	gopkg.in/yaml.v3 v3.0.1
