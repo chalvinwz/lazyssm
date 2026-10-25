@@ -76,7 +76,77 @@ lazyssm doctor
 
 ## Install
 
-### go install (recommended)
+Pick one. Each gives you a `lazyssm` command.
+
+| Platform               | Install                                                                                                                       | Update                       |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| macOS / Linux / WSL    | `curl -fsSL https://raw.githubusercontent.com/chalvinwz/lazyssm/main/install.sh \| sh`                                        | Run the same command again   |
+| Homebrew               | `brew install chalvinwz/tap/lazyssm`                                                                                          | `brew upgrade lazyssm`       |
+| Scoop (Windows)        | `scoop bucket add chalvinwz https://github.com/chalvinwz/scoop-bucket`<br>`scoop install lazyssm`                             | `scoop update lazyssm`       |
+| PowerShell (Windows)   | `irm https://raw.githubusercontent.com/chalvinwz/lazyssm/main/install.ps1 \| iex`                                             | Run the same command again   |
+
+- Both install scripts check the download against the release's
+  `checksums.txt` before installing anything.
+- `install.sh` uses `sudo` only when the install directory isn't writable, and
+  never edits your shell rc files.
+- `install.ps1` needs no admin rights. It adds its folder to your user `PATH`,
+  so open a new terminal afterwards.
+- Homebrew builds from source, so the first install takes a minute (Go is
+  pulled in as a build dependency).
+
+### Pin a version
+
+Set `LAZYSSM_VERSION` to a release tag, with or without the leading `v`. The
+default is the latest release.
+
+```sh
+# install.sh: put the variable after the pipe, on `sh`
+curl -fsSL https://raw.githubusercontent.com/chalvinwz/lazyssm/main/install.sh | LAZYSSM_VERSION=v0.3.0 sh
+```
+
+```powershell
+# install.ps1: set the variable first
+$env:LAZYSSM_VERSION = 'v0.3.0'
+irm https://raw.githubusercontent.com/chalvinwz/lazyssm/main/install.ps1 | iex
+```
+
+### Custom install dir
+
+Set `LAZYSSM_INSTALL_DIR`. The defaults are `/usr/local/bin` for `install.sh`
+and `%LOCALAPPDATA%\Programs\lazyssm` for `install.ps1`.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/chalvinwz/lazyssm/main/install.sh | LAZYSSM_INSTALL_DIR="$HOME/.local/bin" sh
+```
+
+```powershell
+$env:LAZYSSM_INSTALL_DIR = 'C:\tools\lazyssm'
+irm https://raw.githubusercontent.com/chalvinwz/lazyssm/main/install.ps1 | iex
+```
+
+### Inspect before running
+
+To read a script before it runs, download it, look at it, then run it:
+
+```sh
+curl -fsSL -o install.sh https://raw.githubusercontent.com/chalvinwz/lazyssm/main/install.sh
+less install.sh
+sh install.sh
+```
+
+```powershell
+irm https://raw.githubusercontent.com/chalvinwz/lazyssm/main/install.ps1 -OutFile install.ps1
+notepad install.ps1
+```
+
+Notepad opens and the prompt comes straight back, so run the script only once
+you have read it:
+
+```powershell
+Get-Content .\install.ps1 -Raw | iex
+```
+
+### go install
 
 Requires Go 1.26.3 or later.
 
@@ -92,6 +162,28 @@ cd lazyssm
 make build          # produces bin/lazyssm
 # or
 make install        # installs into GOBIN via go install
+```
+
+### Uninstall
+
+Remove it the way you installed it.
+
+```sh
+# install.sh (drop sudo if you set LAZYSSM_INSTALL_DIR; remove the file from that dir)
+sudo rm /usr/local/bin/lazyssm
+
+# Homebrew
+brew uninstall lazyssm
+
+# Scoop
+scoop uninstall lazyssm
+```
+
+For `install.ps1`, delete its folder, then remove that folder from your user
+`Path` (Start menu, "Edit environment variables for your account"):
+
+```powershell
+Remove-Item -Recurse "$env:LOCALAPPDATA\Programs\lazyssm"
 ```
 
 ---
