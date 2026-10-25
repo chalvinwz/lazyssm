@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   suspends the TUI, runs `aws sso login` with the active profile/region, and
   resumes with a fresh fetch. One attempt per expiry; on failure the preflight
   screen appears as before ([#18]).
+- `y` / `Y` copy the selected instance's ID / IP to the clipboard. Locally
+  lazyssm uses the system copy tool (`pbcopy`, `clip.exe`, `wl-copy`, `xclip`
+  or `xsel`); over SSH, or when none is installed, it uses the terminal's
+  OSC 52 clipboard instead. Each copy uses exactly one of the two, so
+  clipboard-history tools record a single entry.
 
 ### Fixed
 

@@ -331,6 +331,7 @@ func (m Model) renderHelp() string {
 		{"/", "fuzzy search (↑↓ to move, ⏎ connects)"},
 		{"t", "toggle SSM-only ↔ all EC2"},
 		{"p", "pin / unpin selected"},
+		{"y / Y", "copy instance ID / IP"},
 		{"r", "refresh inventory"},
 		{"enter", "connect (SSM shell)"},
 		{"?", "toggle this help"},

@@ -187,6 +187,7 @@ focused you can navigate the narrowed results live with `↑`/`↓` (or
 | `/`              | Open client-side fuzzy search bar            |
 | `t`              | Toggle SSM-only source ↔ all EC2             |
 | `p`              | Pin / unpin selected instance                |
+| `y` / `Y`        | Copy selected instance ID / IP to clipboard  |
 | `r`              | Refresh inventory from AWS                   |
 | `Enter`          | Connect to selected instance (SSM shell)     |
 | `?`              | Toggle keybinding help overlay               |
