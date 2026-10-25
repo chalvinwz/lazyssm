@@ -1,0 +1,131 @@
+name: installers
+
+# Path-filtered, and deliberately not a required check on main, so it never
+# blocks unrelated PRs.
+on:
+  pull_request:
+    paths:
+      - install.sh
+      - install.ps1
+      - "packaging/**"
+      - .github/workflows/installers.yml
+  push:
+    branches: [main]
+    paths:
+      - install.sh
+      - install.ps1
+      - "packaging/**"
+      - .github/workflows/installers.yml
+
+permissions:
+  contents: read
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+    env:
+      SHELLCHECK_VERSION: v0.11.0
+      # sha256 of shellcheck-v0.11.0.linux.x86_64.tar.gz from the
+      # koalaman/shellcheck release.
+      SHELLCHECK_SHA256: b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install shellcheck
+        run: |
+          archive="shellcheck-$SHELLCHECK_VERSION.linux.x86_64.tar.gz"
+          curl -fsSL --proto '=https' --tlsv1.2 -o "$RUNNER_TEMP/$archive" \
+            "https://github.com/koalaman/shellcheck/releases/download/$SHELLCHECK_VERSION/$archive"
+          echo "$SHELLCHECK_SHA256  $RUNNER_TEMP/$archive" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP"
+          "$RUNNER_TEMP/shellcheck-$SHELLCHECK_VERSION/shellcheck" --version
+      - name: Run shellcheck
+        # By full path: the runner image has an older shellcheck on PATH.
+        run: |
+          "$RUNNER_TEMP/shellcheck-$SHELLCHECK_VERSION/shellcheck" --shell=sh install.sh packaging/publish.sh
+
+  installer-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: "go.mod"
+      - name: Test
+        run: go test ./packaging/... -v
+
+  # Installs real releases from GitHub with the checked-out scripts: a pinned
+  # v0.2.0, then the latest release (no LAZYSSM_VERSION) into a fresh dir, so
+  # the latest-release lookup runs against real GitHub and the v0.2.0 binary
+  # cannot satisfy the second check.
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install v0.2.0 with install.sh
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          LAZYSSM_VERSION: v0.2.0
+        run: |
+          LAZYSSM_INSTALL_DIR="$RUNNER_TEMP/bin" sh ./install.sh
+          got=$("$RUNNER_TEMP/bin/lazyssm" --version)
+          if [ "$got" != "lazyssm 0.2.0" ]; then
+            echo "::error::lazyssm --version printed '$got', want 'lazyssm 0.2.0'"
+            exit 1
+          fi
+          echo "$got"
+      - name: Install the latest release with install.sh
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          LAZYSSM_INSTALL_DIR="$RUNNER_TEMP/latest" sh ./install.sh
+          got=$("$RUNNER_TEMP/latest/lazyssm" --version)
+          re='^lazyssm [0-9]+\.[0-9]+\.[0-9]+$'
+          if ! [[ $got =~ $re ]]; then
+            echo "::error::lazyssm --version printed '$got', want a match for $re"
+            exit 1
+          fi
+          echo "$got"
+
+      - name: Install v0.2.0 with install.ps1
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          LAZYSSM_VERSION: v0.2.0
+        run: |
+          $env:LAZYSSM_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'bin'
+          & ./install.ps1
+          $exe = Join-Path $env:LAZYSSM_INSTALL_DIR 'lazyssm.exe'
+          $got = @(& $exe --version)
+          if ($LASTEXITCODE -ne 0 -or $got.Count -ne 1 -or $got[0] -cne 'lazyssm 0.2.0') {
+            throw "$exe --version printed '$($got -join '; ')' (exit $LASTEXITCODE), want 'lazyssm 0.2.0'"
+          }
+          Write-Host $got[0]
+      - name: Install the latest release with install.ps1
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:LAZYSSM_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'latest'
+          & ./install.ps1
+          $exe = Join-Path $env:LAZYSSM_INSTALL_DIR 'lazyssm.exe'
+          $got = @(& $exe --version)
+          $re = '^lazyssm \d+\.\d+\.\d+\z'
+          if ($LASTEXITCODE -ne 0 -or $got.Count -ne 1 -or $got[0] -cnotmatch $re) {
+            throw "$exe --version printed '$($got -join '; ')' (exit $LASTEXITCODE), want a match for $re"
+          }
+          Write-Host $got[0]

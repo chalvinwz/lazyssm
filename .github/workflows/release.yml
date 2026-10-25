@@ -4,12 +4,22 @@ on:
   push:
     tags: ["v[0-9]+.[0-9]+.[0-9]+"]
 
+# Read-only unless a job asks for more; only goreleaser writes (the release).
 permissions:
-  contents: write
+  contents: read
+
+defaults:
+  run:
+    # An explicit bash runs with -eo pipefail, so a failed curl in a pipeline
+    # fails the step instead of passing empty input on. verify-windows
+    # overrides this with pwsh.
+    shell: bash
 
 jobs:
   goreleaser:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -23,3 +33,176 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # homebrew and scoop publish to the tap and bucket repos with
+  # PACKAGES_GITHUB_TOKEN. Only their publish steps see it, and only gh (via
+  # packaging/publish.sh) uses it. Publishing is idempotent: when the file is
+  # already current nothing is committed, so either job can be re-run alone.
+  homebrew:
+    needs: goreleaser
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: "go.mod"
+          cache: false
+      - name: Render the formula
+        run: |
+          sha=$(curl -fsSL "https://github.com/chalvinwz/lazyssm/archive/refs/tags/$TAG.tar.gz" | sha256sum | cut -d' ' -f1)
+          echo "source tarball sha256: $sha"
+          go run ./packaging/render homebrew -tag "$TAG" -sha256 "$sha" \
+            -template packaging/homebrew/lazyssm.rb.tmpl >"$RUNNER_TEMP/lazyssm.rb"
+          cat "$RUNNER_TEMP/lazyssm.rb"
+      - name: Publish to chalvinwz/homebrew-tap
+        env:
+          GH_TOKEN: ${{ secrets.PACKAGES_GITHUB_TOKEN }}
+        run: |
+          packaging/publish.sh chalvinwz/homebrew-tap Formula/lazyssm.rb \
+            "$RUNNER_TEMP/lazyssm.rb" "lazyssm ${TAG#v}"
+
+  scoop:
+    needs: goreleaser
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: "go.mod"
+          cache: false
+      - name: Render the manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" -p checksums.txt -D "$RUNNER_TEMP"
+          go run ./packaging/render scoop -tag "$TAG" -checksums "$RUNNER_TEMP/checksums.txt" \
+            -template packaging/scoop/lazyssm.json.tmpl >"$RUNNER_TEMP/lazyssm.json"
+          cat "$RUNNER_TEMP/lazyssm.json"
+      - name: Publish to chalvinwz/scoop-bucket
+        env:
+          GH_TOKEN: ${{ secrets.PACKAGES_GITHUB_TOKEN }}
+        run: |
+          packaging/publish.sh chalvinwz/scoop-bucket bucket/lazyssm.json \
+            "$RUNNER_TEMP/lazyssm.json" "lazyssm ${TAG#v}"
+
+  # The verify jobs install the release the way users do and check that
+  # `lazyssm --version` prints exactly "lazyssm X.Y.Z" for this tag.
+  verify-brew:
+    needs: homebrew
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: Install with Homebrew
+        run: brew install chalvinwz/tap/lazyssm
+      - name: Check the version
+        run: |
+          got=$("$(brew --prefix)/bin/lazyssm" --version)
+          want="lazyssm ${TAG#v}"
+          if [ "$got" != "$want" ]; then
+            echo "::error::lazyssm --version printed '$got', want '$want'"
+            exit 1
+          fi
+          echo "$got"
+
+  verify-install-sh:
+    needs: goreleaser
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: Install with install.sh from the tag
+        run: |
+          curl -fsSL "https://raw.githubusercontent.com/chalvinwz/lazyssm/$TAG/install.sh" |
+            LAZYSSM_VERSION="$TAG" LAZYSSM_INSTALL_DIR="$RUNNER_TEMP/bin" sh
+      - name: Check the version
+        run: |
+          got=$("$RUNNER_TEMP/bin/lazyssm" --version)
+          want="lazyssm ${TAG#v}"
+          if [ "$got" != "$want" ]; then
+            echo "::error::lazyssm --version printed '$got', want '$want'"
+            exit 1
+          fi
+          echo "$got"
+
+  verify-windows:
+    needs: [goreleaser, scoop]
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      TAG: ${{ github.ref_name }}
+      # ScoopInstaller/Install's install.ps1 at a fixed commit, and the sha256
+      # of that file. The step checks the hash before running the script.
+      SCOOP_INSTALLER_URL: https://raw.githubusercontent.com/ScoopInstaller/Install/1e2f334083d609986d8c8bc9e31ae8e87c39fab4/install.ps1
+      SCOOP_INSTALLER_SHA256: 94f983b190438311e006b957db7c8422709e0ba62a6c2ac04e278164108f2512
+    steps:
+      - name: Install with install.ps1 from the tag
+        run: |
+          $env:LAZYSSM_VERSION = $env:TAG
+          $env:LAZYSSM_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'bin'
+          Invoke-RestMethod -UseBasicParsing -Uri "https://raw.githubusercontent.com/chalvinwz/lazyssm/$env:TAG/install.ps1" | Invoke-Expression
+      - name: Check the install.ps1 version
+        run: |
+          $exe = Join-Path $env:RUNNER_TEMP 'bin\lazyssm.exe'
+          $want = 'lazyssm ' + ($env:TAG -replace '^v', '')
+          $got = @(& $exe --version)
+          if ($LASTEXITCODE -ne 0 -or $got.Count -ne 1 -or $got[0] -cne $want) {
+            throw "$exe --version printed '$($got -join '; ')' (exit $LASTEXITCODE), want '$want'"
+          }
+          Write-Host $got[0]
+      - name: Install Scoop
+        run: |
+          $installer = Join-Path $env:RUNNER_TEMP 'scoop-install.ps1'
+          Invoke-WebRequest -UseBasicParsing -Uri $env:SCOOP_INSTALLER_URL -OutFile $installer
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer).Hash.ToLowerInvariant()
+          if ($hash -ne $env:SCOOP_INSTALLER_SHA256) {
+            throw "Scoop installer sha256 is $hash, want $env:SCOOP_INSTALLER_SHA256; not running it"
+          }
+          # The runner's user is an administrator, which the installer
+          # refuses without -RunAsAdmin.
+          & $installer -RunAsAdmin
+          if ($LASTEXITCODE) { throw "Scoop installer exited $LASTEXITCODE" }
+          $shims = Join-Path $env:USERPROFILE 'scoop\shims'
+          if (-not (Test-Path -LiteralPath (Join-Path $shims 'scoop.ps1'))) {
+            throw "Scoop installer finished but $shims has no scoop shim"
+          }
+          Add-Content -LiteralPath $env:GITHUB_PATH -Value $shims
+      - name: Install with Scoop
+        run: |
+          scoop bucket add chalvinwz https://github.com/chalvinwz/scoop-bucket
+          if ($LASTEXITCODE) { throw "scoop bucket add exited $LASTEXITCODE" }
+          scoop install lazyssm
+          if ($LASTEXITCODE) { throw "scoop install exited $LASTEXITCODE" }
+      - name: Check the Scoop version
+        run: |
+          $exe = Join-Path $env:USERPROFILE 'scoop\shims\lazyssm.exe'
+          $want = 'lazyssm ' + ($env:TAG -replace '^v', '')
+          $got = @(& $exe --version)
+          if ($LASTEXITCODE -ne 0 -or $got.Count -ne 1 -or $got[0] -cne $want) {
+            throw "$exe --version printed '$($got -join '; ')' (exit $LASTEXITCODE), want '$want'"
+          }
+          Write-Host $got[0]
