@@ -244,6 +244,12 @@ func assertGET(t *testing.T, call []string) {
 	if len(ghFields(t, call)) != 0 {
 		t.Errorf("read call sends fields: %q", call)
 	}
+	// The fake gh ignores --jq, so check the filter here: publish.sh reads
+	// its output as these three lines.
+	const filter = ".sha, .encoding, .content"
+	if i := slices.Index(call, "--jq"); i < 0 || i+1 >= len(call) || call[i+1] != filter {
+		t.Errorf("read call does not pass --jq %q: %q", filter, call)
+	}
 }
 
 // assertPUT checks call writes the local file with the commit message and

@@ -78,12 +78,12 @@ lazyssm doctor
 
 Pick one. Each gives you a `lazyssm` command.
 
-| Platform               | Install                                                                                                                       | Update                       |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
-| macOS / Linux / WSL    | `curl -fsSL https://raw.githubusercontent.com/chalvinwz/lazyssm/main/install.sh \| sh`                                        | Run the same command again   |
-| Homebrew               | `brew install chalvinwz/tap/lazyssm`                                                                                          | `brew upgrade lazyssm`       |
-| Scoop (Windows)        | `scoop bucket add chalvinwz https://github.com/chalvinwz/scoop-bucket`<br>`scoop install lazyssm`                             | `scoop update lazyssm`       |
-| PowerShell (Windows)   | `irm https://raw.githubusercontent.com/chalvinwz/lazyssm/main/install.ps1 \| iex`                                             | Run the same command again   |
+| Platform                 | Install                                                                                                                       | Update                       |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| macOS / Linux / WSL      | `curl -fsSL https://raw.githubusercontent.com/chalvinwz/lazyssm/main/install.sh \| sh`                                        | Run the same command again   |
+| Homebrew (macOS / Linux) | `brew install chalvinwz/tap/lazyssm`                                                                                          | `brew upgrade lazyssm`       |
+| Scoop (Windows)          | `scoop bucket add chalvinwz https://github.com/chalvinwz/scoop-bucket`<br>`scoop install lazyssm`<br>(`scoop bucket add` needs git: `scoop install git` first) | `scoop update lazyssm`       |
+| PowerShell (Windows)     | `irm https://raw.githubusercontent.com/chalvinwz/lazyssm/main/install.ps1 \| iex`                                             | Run the same command again   |
 
 - Both install scripts check the download against the release's
   `checksums.txt` before installing anything.
@@ -110,6 +110,9 @@ $env:LAZYSSM_VERSION = 'v0.3.0'
 irm https://raw.githubusercontent.com/chalvinwz/lazyssm/main/install.ps1 | iex
 ```
 
+`$env:LAZYSSM_VERSION` stays set for the rest of the PowerShell session, so a
+later run installs that version too; `Remove-Item Env:LAZYSSM_VERSION` clears it.
+
 ### Custom install dir
 
 Set `LAZYSSM_INSTALL_DIR`. The defaults are `/usr/local/bin` for `install.sh`
@@ -123,6 +126,8 @@ curl -fsSL https://raw.githubusercontent.com/chalvinwz/lazyssm/main/install.sh |
 $env:LAZYSSM_INSTALL_DIR = 'C:\tools\lazyssm'
 irm https://raw.githubusercontent.com/chalvinwz/lazyssm/main/install.ps1 | iex
 ```
+
+This too stays set for the session; `Remove-Item Env:LAZYSSM_INSTALL_DIR` clears it.
 
 ### Inspect before running
 
@@ -168,19 +173,29 @@ make install        # installs into GOBIN via go install
 
 Remove it the way you installed it.
 
+`install.sh`: delete the binary. If you set `LAZYSSM_INSTALL_DIR`, delete
+`lazyssm` from that dir instead. `sudo` is needed only if you can't write to
+the dir yourself:
+
 ```sh
-# install.sh (drop sudo if you set LAZYSSM_INSTALL_DIR; remove the file from that dir)
 sudo rm /usr/local/bin/lazyssm
+```
 
-# Homebrew
+Homebrew:
+
+```sh
 brew uninstall lazyssm
+```
 
-# Scoop
+Scoop:
+
+```powershell
 scoop uninstall lazyssm
 ```
 
-For `install.ps1`, delete its folder, then remove that folder from your user
-`Path` (Start menu, "Edit environment variables for your account"):
+`install.ps1`: delete its folder, then remove that folder from your user
+`Path` (Start menu, "Edit environment variables for your account"). If you
+set `LAZYSSM_INSTALL_DIR`, delete just `lazyssm.exe` from that dir instead.
 
 ```powershell
 Remove-Item -Recurse "$env:LOCALAPPDATA\Programs\lazyssm"

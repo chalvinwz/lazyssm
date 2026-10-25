@@ -1,14 +1,24 @@
 package packaging
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
 
-const workflowGlob = "../.github/workflows/*.yml"
+const workflowDir = "../.github/workflows"
+
+// workflowPatterns match every workflow file GitHub runs: it reads both
+// extensions.
+var workflowPatterns = []string{"*.yml", "*.yaml"}
+
+// usesLine picks out the lines the pin check applies to: a `uses:` key,
+// also as a list item, whatever the spacing (`-  uses:` too).
+var usesLine = regexp.MustCompile(`^\s*-?\s*uses:`)
 
 // pinnedUses is the only accepted shape of a `uses:` line: owner/repo@<full
 // 40-hex commit SHA> followed by the human-readable version as a comment.
@@ -31,26 +41,69 @@ func indentOf(line string) int {
 	return len(line) - len(strings.TrimLeft(line, " "))
 }
 
+// workflowFiles returns the workflow files in dir, of either extension.
+func workflowFiles(t *testing.T, dir string) []string {
+	t.Helper()
+	var files []string
+	for _, pattern := range workflowPatterns {
+		matches, err := filepath.Glob(filepath.Join(dir, pattern))
+		if err != nil {
+			t.Fatalf("glob %s: %v", pattern, err)
+		}
+		files = append(files, matches...)
+	}
+	return files
+}
+
+// unpinnedActions returns "file:line: text" for each `uses:` line in files
+// that is not pinned as owner/repo@<40-hex sha> # vX.Y.Z.
+func unpinnedActions(t *testing.T, files []string) []string {
+	t.Helper()
+	var bad []string
+	for _, f := range files {
+		for i, line := range readLines(t, f) {
+			if usesLine.MatchString(line) && !pinnedUses.MatchString(line) {
+				bad = append(bad, fmt.Sprintf("%s:%d: %s", f, i+1, strings.TrimSpace(line)))
+			}
+		}
+	}
+	return bad
+}
+
 // TestWorkflowActionsPinnedBySHA enforces the repo rule that every GitHub
 // Action is pinned to a full commit SHA, never a movable tag or branch.
 func TestWorkflowActionsPinnedBySHA(t *testing.T) {
-	files, err := filepath.Glob(workflowGlob)
-	if err != nil {
-		t.Fatalf("glob %s: %v", workflowGlob, err)
-	}
+	files := workflowFiles(t, workflowDir)
 	if len(files) == 0 {
-		t.Fatalf("no workflow files match %s", workflowGlob)
+		t.Fatalf("no workflow files in %s", workflowDir)
 	}
-	for _, f := range files {
-		for i, line := range readLines(t, f) {
-			trimmed := strings.TrimSpace(line)
-			if !strings.HasPrefix(trimmed, "uses:") && !strings.HasPrefix(trimmed, "- uses:") {
-				continue
-			}
-			if !pinnedUses.MatchString(line) {
-				t.Errorf("%s:%d: action not pinned as owner/repo@<40-hex sha> # vX.Y.Z: %q", f, i+1, trimmed)
-			}
+	for _, bad := range unpinnedActions(t, files) {
+		t.Errorf("action not pinned as owner/repo@<40-hex sha> # vX.Y.Z: %s", bad)
+	}
+}
+
+// TestWorkflowPinCheckSeesEveryUsesLine checks the pin check itself: it
+// must read .yaml files as well as .yml, and a `uses:` line however it is
+// spaced.
+func TestWorkflowPinCheckSeesEveryUsesLine(t *testing.T) {
+	dir := t.TempDir()
+	pinned := "      - uses: actions/checkout@" + strings.Repeat("0", 40) + " # v7.0.1\n"
+	for name, body := range map[string]string{
+		"a.yml":  "steps:\n" + pinned + "      -  uses: actions/checkout@v7\n",
+		"b.yaml": "steps:\n" + pinned + "      - uses: actions/setup-go@v7\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
 		}
+	}
+	got := unpinnedActions(t, workflowFiles(t, dir))
+	want := []string{
+		filepath.Join(dir, "a.yml") + ":3: -  uses: actions/checkout@v7",
+		filepath.Join(dir, "b.yaml") + ":3: - uses: actions/setup-go@v7",
+	}
+	slices.Sort(got)
+	if !slices.Equal(got, want) {
+		t.Errorf("unpinned actions found:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
 

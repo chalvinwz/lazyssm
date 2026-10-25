@@ -55,7 +55,7 @@ cleanup() {
 }
 
 check_tools() {
-	for tool in uname tar mktemp install; do
+	for tool in uname tar mktemp install awk; do
 		has "$tool" || die "$tool is required but was not found on PATH"
 	done
 	if ! has sha256sum && ! has shasum; then
@@ -142,6 +142,12 @@ resolve_version() {
 resolve_dir() {
 	dir=${LAZYSSM_INSTALL_DIR:-/usr/local/bin}
 	case $dir in
+	# Quoted, as in LAZYSSM_INSTALL_DIR="~/bin", ~ is not expanded, and the
+	# dir would be ./~/bin.
+	\~*)
+		die "LAZYSSM_INSTALL_DIR '$dir' starts with a literal ~; use \$HOME instead" \
+			"for example: LAZYSSM_INSTALL_DIR=\"\$HOME/.local/bin\""
+		;;
 	/*) ;;
 	*) dir="$(pwd)/$dir" ;;
 	esac

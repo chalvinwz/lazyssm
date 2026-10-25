@@ -92,7 +92,10 @@ func TestFormulaRendersTagAndSHA(t *testing.T) {
 		`-X main.version=#{version}`,
 		`./cmd/lazyssm`,
 		`brew install awscli`,
+		// Casks are macOS-only, so Linux gets AWS's install page instead.
+		`if OS.mac?`,
 		`brew install --cask session-manager-plugin`,
+		`https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html`,
 		`lazyssm doctor`,
 		`assert_match "lazyssm #{version}", shell_output("#{bin}/lazyssm --version")`,
 	} {
@@ -106,6 +109,10 @@ func TestFormulaRendersTagAndSHA(t *testing.T) {
 
 	ruby, err := exec.LookPath("ruby")
 	if err != nil {
+		// Every CI runner has ruby, so there the check must not go quiet.
+		if os.Getenv("CI") != "" {
+			t.Fatal("ruby not on PATH; CI must run the ruby -c syntax check")
+		}
 		t.Log("ruby not on PATH; skipping ruby -c syntax check")
 		return
 	}

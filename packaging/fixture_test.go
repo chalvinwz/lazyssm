@@ -157,9 +157,17 @@ func runInstallSH(t *testing.T, env map[string]string) (stdout, stderr string, c
 // test if the command cannot start or outlives scriptTimeout.
 func runScript(t *testing.T, env map[string]string, stdin io.Reader, name string, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
+	return runScriptIn(t, "", env, stdin, name, args...)
+}
+
+// runScriptIn is runScript with dir as the working directory ("" means this
+// package's directory).
+func runScriptIn(t *testing.T, dir string, env map[string]string, stdin io.Reader, name string, args ...string) (stdout, stderr string, code int) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), scriptTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = dir
 	cmd.Env = make([]string, 0, len(env)) // non-nil, so nothing is inherited
 	for _, k := range slices.Sorted(maps.Keys(env)) {
 		cmd.Env = append(cmd.Env, k+"="+env[k])

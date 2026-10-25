@@ -27,6 +27,7 @@
     $ProgressPreference = 'SilentlyContinue'
 
     $RepoUrl = 'https://github.com/chalvinwz/lazyssm'
+    $LatestReleaseUrl = "$RepoUrl/releases/latest"
     $LatestReleaseApi = 'https://api.github.com/repos/chalvinwz/lazyssm/releases/latest'
     $InstallShUrl = 'https://raw.githubusercontent.com/chalvinwz/lazyssm/main/install.sh'
     $AwsCliDocUrl = 'https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html'
@@ -93,26 +94,53 @@
         Stop-Install "LAZYSSM_DOWNLOAD_BASE must be an https:// URL or an existing directory, not '$base'"
     }
 
+    # Get-LatestTag returns the tag that releases/latest redirects to, as
+    # install.sh does (no API call, so no rate limit). Only if that fails does
+    # it ask the GitHub API, which allows 60 unauthenticated requests an hour
+    # per IP address, and it warns when it does, so the fallback is visible.
+    function Get-LatestTag {
+        Write-Step 'Looking up the latest release'
+        $redirectFailure = ''
+        try {
+            $resp = Invoke-WebRequest -UseBasicParsing -Method Head -Uri $LatestReleaseUrl
+            # The URI after redirects: Windows PowerShell 5.1 answers with an
+            # HttpWebResponse, PowerShell 7 with an HttpResponseMessage. The
+            # properties are looked up by name, so a caller's strict mode
+            # cannot turn the one that is missing into an error.
+            $base = $resp.BaseResponse
+            $final = ''
+            if ($base.PSObject.Properties['ResponseUri']) {
+                $final = [string]$base.ResponseUri.AbsoluteUri
+            } elseif ($base.PSObject.Properties['RequestMessage']) {
+                $final = [string]$base.RequestMessage.RequestUri.AbsoluteUri
+            }
+            if ($final -match '/releases/tag/([^/?#]+)') {
+                return $Matches[1]
+            }
+            $redirectFailure = "it led to '$final', not to a release"
+        } catch {
+            $redirectFailure = $_.Exception.Message
+        }
+        Write-Warn "could not follow the releases/latest redirect ($redirectFailure); asking the GitHub API instead"
+        $reasons = @("${LatestReleaseUrl}: $redirectFailure")
+        try {
+            $tag = [string](Invoke-RestMethod -UseBasicParsing -Uri $LatestReleaseApi).tag_name
+            if ($tag) {
+                return $tag
+            }
+            $reasons += "$LatestReleaseApi has no tag_name"
+        } catch {
+            $reasons += "${LatestReleaseApi}: $($_.Exception.Message)"
+        }
+        Stop-Install "could not look up the latest release at $LatestReleaseUrl" -Hint ($reasons + @('set LAZYSSM_VERSION (e.g. v0.3.0) to pick a release'))
+    }
+
     # Get-Version returns the version to install, without its leading v: the
     # one LAZYSSM_VERSION names, or else the latest release.
     function Get-Version {
         $requested = $env:LAZYSSM_VERSION
         if (-not $requested) {
-            Write-Step 'Looking up the latest release'
-            $reason = ''
-            try {
-                $requested = [string](Invoke-RestMethod -UseBasicParsing -Uri $LatestReleaseApi).tag_name
-            } catch {
-                $requested = ''
-                $reason = $_.Exception.Message
-            }
-            if (-not $requested) {
-                $hint = @('set LAZYSSM_VERSION (e.g. v0.3.0) to pick a release')
-                if ($reason) {
-                    $hint = @($reason) + $hint
-                }
-                Stop-Install "could not look up the latest release at $LatestReleaseApi" -Hint $hint
-            }
+            $requested = Get-LatestTag
         }
         $version = $requested
         if ($version.StartsWith('v', [StringComparison]::Ordinal)) {
@@ -178,7 +206,14 @@
         if (-not $expected) {
             Stop-Install "checksums.txt for $Tag has no entry for $Archive; not installing"
         }
-        $actual = (Get-FileHash -LiteralPath $Zip -Algorithm SHA256).Hash.ToLowerInvariant()
+        # Get-FileHash and Expand-Archive are script-module functions, which
+        # on Windows PowerShell 5.1 do not inherit $ErrorActionPreference, so
+        # they get -ErrorAction Stop to make a failure reach the catch.
+        try {
+            $actual = (Get-FileHash -LiteralPath $Zip -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+        } catch {
+            Stop-Install "could not compute the sha256 checksum of $Archive; not installing" -Hint $_.Exception.Message
+        }
         if (-not [string]::Equals($actual, $expected, [StringComparison]::OrdinalIgnoreCase)) {
             Stop-Install "checksum mismatch for $Archive; not installing" -Hint "expected sha256 $expected", "got sha256      $actual"
         }
@@ -190,7 +225,7 @@
     function Expand-Release([string]$Zip, [string]$Archive, [string]$Dir) {
         $out = [IO.Path]::Combine($Dir, 'extract')
         try {
-            Expand-Archive -LiteralPath $Zip -DestinationPath $out -Force
+            Expand-Archive -LiteralPath $Zip -DestinationPath $out -Force -ErrorAction Stop
         } catch {
             Stop-Install "could not extract $Archive" -Hint $_.Exception.Message
         }

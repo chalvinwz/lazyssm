@@ -13,10 +13,16 @@ class Lazyssm < Formula
   end
 
   def caveats
+    # Casks are macOS-only; on Linux, AWS's page has the plugin's packages.
+    plugin = if OS.mac?
+      "brew install --cask session-manager-plugin"
+    else
+      "session-manager-plugin: https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html"
+    end
     <<~EOS
       lazyssm needs the AWS CLI and the Session Manager plugin at runtime:
         brew install awscli
-        brew install --cask session-manager-plugin
+        #{plugin}
 
       Run `lazyssm doctor` to check your environment.
     EOS

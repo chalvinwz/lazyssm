@@ -38,8 +38,9 @@ type shRun func(t *testing.T, env map[string]string) (stdout, stderr string, cod
 
 // shell is one shell install.sh is tested under.
 type shell struct {
-	run  shRun // `<shell> ../install.sh`
-	pipe shRun // `<shell> -s` with the script on stdin, as `curl … | sh` runs it
+	path string // the shell itself, e.g. /bin/dash
+	run  shRun  // `<shell> ../install.sh`
+	pipe shRun  // `<shell> -s` with the script on stdin, as `curl … | sh` runs it
 }
 
 // eachShell runs fn as a subtest per shell install.sh must work under:
@@ -51,11 +52,11 @@ func eachShell(t *testing.T, fn func(t *testing.T, sh shell)) {
 		t.Skip("install.sh is for macOS and Linux; Windows uses install.ps1")
 	}
 	t.Run("sh", func(t *testing.T) {
-		fn(t, shell{run: runInstallSH, pipe: pipedRun("/bin/sh")})
+		fn(t, shell{path: "/bin/sh", run: runInstallSH, pipe: pipedRun("/bin/sh")})
 	})
 	if _, err := os.Stat("/bin/dash"); err == nil {
 		t.Run("dash", func(t *testing.T) {
-			fn(t, shell{run: scriptRun("/bin/dash"), pipe: pipedRun("/bin/dash")})
+			fn(t, shell{path: "/bin/dash", run: scriptRun("/bin/dash"), pipe: pipedRun("/bin/dash")})
 		})
 	}
 }
@@ -111,6 +112,20 @@ func newSandbox(t *testing.T, base string) *sandbox {
 func newRelease(t *testing.T) *sandbox {
 	t.Helper()
 	return newSandbox(t, fakeRelease(t, shTag, releaseAssets(t, shVersion)))
+}
+
+// useTools replaces the real tools on the sandbox's PATH with just these.
+func (s *sandbox) useTools(t *testing.T, tools ...string) {
+	t.Helper()
+	s.tools = toolPath(t, tools...)
+	s.path = []string{s.fakes, s.dir, s.tools}
+}
+
+// without returns tools minus the dropped ones.
+func without(tools []string, drop ...string) []string {
+	return slices.DeleteFunc(slices.Clone(tools), func(tool string) bool {
+		return slices.Contains(drop, tool)
+	})
 }
 
 func (s *sandbox) env(version string) map[string]string {
@@ -530,6 +545,28 @@ func TestInstallSHUsesSudoOnlyWhenNeeded(t *testing.T) {
 				}
 			}
 		})
+		// The default on a fresh Apple Silicon Mac: /usr/local/bin does not
+		// exist yet and /usr/local is root's.
+		t.Run("missing_dir_read_only_parent", func(t *testing.T) {
+			skipIfRoot(t)
+			s := newRelease(t)
+			parent := mkdir(t, s.root, "usr-local")
+			s.dir = filepath.Join(parent, "bin") // not created: sudo must
+			s.path = []string{s.fakes, s.dir, s.tools}
+			log := filepath.Join(s.root, "sudo.log")
+			fakeSudo(t, s.fakes, log, parent)
+			makeReadOnly(t, parent)
+			stdout, stderr, code := s.install(t, sh.run, shTag)
+			wantSuccess(t, code, stdout, stderr)
+			wantInstalled(t, s.dir, shVersion)
+			got := strings.Split(strings.TrimSpace(readIfExists(t, log)), "\n")
+			target := filepath.Join(s.dir, "lazyssm")
+			if len(got) != 2 || got[0] != "mkdir -p "+s.dir ||
+				!strings.HasPrefix(got[1], "install ") || !strings.HasSuffix(got[1], " "+target) {
+				t.Errorf("sudo ran:\n%s\nwant exactly `mkdir -p %s`, then `install … %s`",
+					strings.Join(got, "\n"), s.dir, target)
+			}
+		})
 	})
 }
 
@@ -545,6 +582,74 @@ func TestInstallSHNoSudoHint(t *testing.T) {
 			t.Errorf("stderr lacks a LAZYSSM_INSTALL_DIR hint:\n%s", stderr)
 		}
 		wantNotInstalled(t, s.dir)
+	})
+}
+
+func TestInstallSHRequiresAwk(t *testing.T) {
+	eachShell(t, func(t *testing.T, sh shell) {
+		s := newRelease(t)
+		s.useTools(t, without(shTools, "awk")...)
+		stdout, stderr, code := s.install(t, sh.run, shTag)
+		wantFailure(t, code, stdout, stderr)
+		if !strings.Contains(stderr, "awk is required") {
+			t.Errorf("stderr does not say awk is required:\n%s", stderr)
+		}
+		if strings.Contains(stdout, "Downloading") {
+			t.Errorf("install.sh started downloading before checking its tools:\n%s", stdout)
+		}
+		wantNotInstalled(t, s.dir)
+	})
+}
+
+// TestInstallSHFallsBackToShasum runs with no sha256sum on PATH, as on macOS
+// before 15, so the checksum comes from `shasum -a 256`.
+func TestInstallSHFallsBackToShasum(t *testing.T) {
+	shasum, err := exec.LookPath("shasum")
+	if err != nil {
+		t.Skip("shasum not on PATH, so the fallback cannot run here")
+	}
+	eachShell(t, func(t *testing.T, sh shell) {
+		s := newRelease(t)
+		s.useTools(t, without(shTools, "sha256sum", "shasum")...)
+		// A logging stand-in for the real shasum.
+		log := filepath.Join(s.root, "shasum.log")
+		writeFake(t, s.fakes, "shasum", fmt.Sprintf("printf '%%s\\n' \"$*\" >> %s\nexec %s \"$@\"\n",
+			shQuote(log), shQuote(shasum)))
+		stdout, stderr, code := s.install(t, sh.run, shTag)
+		wantSuccess(t, code, stdout, stderr)
+		wantInstalled(t, s.dir, shVersion)
+		if !strings.Contains(stdout, "Verified sha256 checksum") {
+			t.Errorf("stdout does not report the verified checksum:\n%s", stdout)
+		}
+		if got := strings.TrimSpace(readIfExists(t, log)); got != "-a 256" {
+			t.Errorf("shasum ran with %q, want once with -a 256", got)
+		}
+	})
+}
+
+// TestInstallSHRejectsTildeDir: in LAZYSSM_INSTALL_DIR="~/bin" the quotes
+// stop the shell expanding ~, so the dir would be ./~/bin.
+func TestInstallSHRejectsTildeDir(t *testing.T) {
+	script, err := filepath.Abs(installSH)
+	if err != nil {
+		t.Fatalf("abs %s: %v", installSH, err)
+	}
+	eachShell(t, func(t *testing.T, sh shell) {
+		s := newRelease(t)
+		cwd := mkdir(t, s.root, "cwd")
+		env := s.env(shTag)
+		env["LAZYSSM_INSTALL_DIR"] = "~/bin"
+		stdout, stderr, code := runScriptIn(t, cwd, env, nil, sh.path, script)
+		wantFailure(t, code, stdout, stderr)
+		if !lineWith(stderr, "~", "$HOME") {
+			t.Errorf("stderr has no line naming ~ and suggesting $HOME:\n%s", stderr)
+		}
+		if got := entries(t, cwd); len(got) > 0 {
+			t.Errorf("install.sh created %v in its working dir", got)
+		}
+		if left := entries(t, s.tmp); len(left) > 0 {
+			t.Errorf("install.sh left %v behind in TMPDIR", left)
+		}
 	})
 }
 

@@ -294,25 +294,35 @@ func writeRawUserPath(raw, kind string) string {
 const deleteUserPath = `$k = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment'); ` +
 	`$k.DeleteValue('Path', $false); $k.Close()`
 
-// keepUserPath saves the raw user Path, unexpanded and with its registry
-// type, and restores exactly that when the test ends. It returns the raw value.
-func keepUserPath(t *testing.T) (raw string) {
+// rawUserPath returns the user Path's registry type ("absent" when there is
+// no Path value) and its raw value, with %VAR% references unexpanded.
+func rawUserPath(t *testing.T) (kind, raw string) {
 	t.Helper()
 	got, err := psQuery(readRawUserPath)
 	if err != nil {
 		t.Fatalf("read user Path: %v", err)
 	}
+	if got == "absent" {
+		return got, ""
+	}
+	kind, b64, _ := strings.Cut(got, " ")
+	val, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		t.Fatalf("decode user Path %q: %v", b64, err)
+	}
+	return kind, string(val)
+}
+
+// keepUserPath saves the raw user Path, unexpanded and with its registry
+// type, and restores exactly that when the test ends. It returns the raw value.
+func keepUserPath(t *testing.T) (raw string) {
+	t.Helper()
+	kind, raw := rawUserPath(t)
 	restore := deleteUserPath
-	if got != "absent" {
-		kind, b64, _ := strings.Cut(got, " ")
+	if kind != "absent" {
 		if kind != "String" && kind != "ExpandString" {
 			t.Fatalf("user Path has registry type %q; not touching it", kind)
 		}
-		val, err := base64.StdEncoding.DecodeString(b64)
-		if err != nil {
-			t.Fatalf("decode user Path %q: %v", b64, err)
-		}
-		raw = string(val)
 		restore = writeRawUserPath(raw, kind)
 	}
 	t.Cleanup(func() {
@@ -514,19 +524,56 @@ func TestInstallPS1KeepsExistingPathEntry(t *testing.T) {
 	})
 }
 
+// TestInstallPS1KeepsUserPathRaw checks that adding the install dir leaves
+// the rest of the user Path as it was: still REG_EXPAND_SZ, with %VAR%
+// entries unexpanded. [Environment]::SetEnvironmentVariable would store the
+// expanded value as REG_SZ.
+func TestInstallPS1KeepsUserPathRaw(t *testing.T) {
+	eachPowerShell(t, func(t *testing.T, shell string) {
+		b := newPSBox(t, shell, psRelease(t, psVersion))
+		const sentinel = `%USERPROFILE%\lazyssm-sentinel`
+		seeded := sentinel
+		if b.path != "" {
+			seeded = strings.TrimSuffix(b.path, ";") + ";" + sentinel
+		}
+		setUserPath(t, seeded)
+		out, code := b.install(t, psTag)
+		wantPSSuccess(t, code, out)
+		wantPSInstalled(t, b.dir, psVersion)
+		kind, raw := rawUserPath(t)
+		if kind != "ExpandString" {
+			t.Errorf("user Path registry type = %s, want ExpandString", kind)
+		}
+		entries := strings.Split(raw, ";")
+		if !slices.Contains(entries, sentinel) {
+			t.Errorf("user Path lost the unexpanded entry %s:\n%s", sentinel, strings.Join(entries, "\n"))
+		}
+		if n := pathCount(entries, b.dir); n != 1 {
+			t.Errorf("user Path names %s %d times, want once:\n%s", b.dir, n, strings.Join(entries, "\n"))
+		}
+	})
+}
+
 // TestInstallPS1DoesNotCloseCallerShell runs a failing install the way a
-// caller's session would, then keeps going. A failed install may raise an
-// error (a caller can catch that), but `exit`, or a bare `break`, would end
-// the caller's whole session under iex, so `after` would never print.
+// caller's session would, then keeps going. A failed install must raise an
+// error the caller can catch, which prints `caught: <message>`; `exit`, or a
+// bare `break`, would end the caller's whole session under iex, so `after`
+// would never print.
 func TestInstallPS1DoesNotCloseCallerShell(t *testing.T) {
 	command := "try { " + iexCommand + " } catch { Write-Output ('caught: ' + $_.Exception.Message) }; Write-Output after"
 	eachPowerShell(t, func(t *testing.T, shell string) {
 		b := newPSBox(t, shell, fakeRelease(t, psTag, map[string][]byte{})) // checksums.txt, no zips
 		out, _ := b.run(t, psTag, command)
-		if !strings.Contains(out, "lazyssm_"+psVersion+"_windows_") {
+		missing := "lazyssm_" + psVersion + "_windows_"
+		if !strings.Contains(out, missing) {
 			t.Errorf("output does not name the missing zip, so the failure path did not run:\n%s", out)
 		}
 		lines := strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n")
+		if !slices.ContainsFunc(lines, func(line string) bool {
+			return strings.HasPrefix(line, "caught: ") && strings.Contains(line, missing)
+		}) {
+			t.Errorf("no `caught: ` line naming the missing zip, so no catchable error reached the caller:\n%s", out)
+		}
 		if !slices.Contains(lines, "after") {
 			t.Errorf("the caller's session ended with the failed install; `after` never printed:\n%s", out)
 		}

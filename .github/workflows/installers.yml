@@ -64,7 +64,8 @@ jobs:
   # Installs real releases from GitHub with the checked-out scripts: a pinned
   # v0.2.0, then the latest release (no LAZYSSM_VERSION) into a fresh dir, so
   # the latest-release lookup runs against real GitHub and the v0.2.0 binary
-  # cannot satisfy the second check.
+  # cannot satisfy the second check. On Ubuntu, v0.2.0 also goes into the
+  # default /usr/local/bin, through the runner's real passwordless sudo.
   smoke:
     strategy:
       fail-fast: false
@@ -101,6 +102,32 @@ jobs:
             exit 1
           fi
           echo "$got"
+      - name: Install v0.2.0 into the default dir with install.sh
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          LAZYSSM_VERSION: v0.2.0
+        run: |
+          # The runner image leaves the root-owned /usr/local/bin mode 777
+          # (actions/runner-images#3727); put it back to a stock 0755 so
+          # install.sh has to use sudo, as on a real machine. The runner is
+          # thrown away after the job.
+          sudo chmod 0755 /usr/local/bin
+          if [ -w /usr/local/bin ]; then
+            echo "::error::/usr/local/bin is writable here, so this step would not exercise sudo"
+            exit 1
+          fi
+          sh ./install.sh | tee "$RUNNER_TEMP/default-dir.out"
+          if ! grep -q 'using sudo' "$RUNNER_TEMP/default-dir.out"; then
+            echo "::error::install.sh did not use sudo for /usr/local/bin"
+            exit 1
+          fi
+          got=$(/usr/local/bin/lazyssm --version)
+          if [ "$got" != "lazyssm 0.2.0" ]; then
+            echo "::error::/usr/local/bin/lazyssm --version printed '$got', want 'lazyssm 0.2.0'"
+            exit 1
+          fi
+          echo "$got"
 
       - name: Install v0.2.0 with install.ps1
         if: runner.os == 'Windows'
@@ -116,12 +143,43 @@ jobs:
             throw "$exe --version printed '$($got -join '; ')' (exit $LASTEXITCODE), want 'lazyssm 0.2.0'"
           }
           Write-Host $got[0]
+      # The two latest-release installs also check that install.ps1 found the
+      # tag through the releases/latest redirect, without warning that it
+      # fell back to the GitHub API: PowerShell 7 here, then Windows
+      # PowerShell 5.1, whose HttpWebResponse takes the other code branch.
       - name: Install the latest release with install.ps1
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $env:LAZYSSM_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'latest'
-          & ./install.ps1
+          & ./install.ps1 *>&1 | Tee-Object -Variable log
+          $text = ($log | ForEach-Object { "$_" }) -join "`n"
+          if ($text -notmatch 'Looking up the latest release') {
+            throw 'install.ps1 did not look up the latest release'
+          }
+          if ($text -match 'asking the GitHub API instead') {
+            throw 'install.ps1 fell back to the GitHub API: the releases/latest redirect did not work'
+          }
+          $exe = Join-Path $env:LAZYSSM_INSTALL_DIR 'lazyssm.exe'
+          $got = @(& $exe --version)
+          $re = '^lazyssm \d+\.\d+\.\d+\z'
+          if ($LASTEXITCODE -ne 0 -or $got.Count -ne 1 -or $got[0] -cnotmatch $re) {
+            throw "$exe --version printed '$($got -join '; ')' (exit $LASTEXITCODE), want a match for $re"
+          }
+          Write-Host $got[0]
+      - name: Install the latest release with install.ps1 under Windows PowerShell 5.1
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $env:LAZYSSM_INSTALL_DIR = Join-Path $env:RUNNER_TEMP 'latest-ps51'
+          Get-Content -LiteralPath ./install.ps1 -Raw | Invoke-Expression *>&1 | Tee-Object -Variable log
+          $text = ($log | ForEach-Object { "$_" }) -join "`n"
+          if ($text -notmatch 'Looking up the latest release') {
+            throw 'install.ps1 did not look up the latest release'
+          }
+          if ($text -match 'asking the GitHub API instead') {
+            throw 'install.ps1 fell back to the GitHub API: the releases/latest redirect did not work'
+          }
           $exe = Join-Path $env:LAZYSSM_INSTALL_DIR 'lazyssm.exe'
           $got = @(& $exe --version)
           $re = '^lazyssm \d+\.\d+\.\d+\z'
