@@ -19,6 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or `xsel`); over SSH, or when none is installed, it uses the terminal's
   OSC 52 clipboard instead. Each copy uses exactly one of the two, so
   clipboard-history tools record a single entry.
+- One-command installs: `install.sh` (macOS, Linux, WSL) and `install.ps1`
+  (Windows) download the release archive and verify it against the release's
+  `checksums.txt` before installing, plus a Homebrew tap
+  (`brew install chalvinwz/tap/lazyssm`) and a Scoop bucket
+  (`scoop bucket add chalvinwz https://github.com/chalvinwz/scoop-bucket`).
+  `LAZYSSM_VERSION` pins a release and `LAZYSSM_INSTALL_DIR` picks the install
+  directory.
 
 ### Fixed
 
