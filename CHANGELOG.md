@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-25
+
 ### Added
 
 - `--auto-login` flag (and persistent `auto_login: true` config option) — when
@@ -18,17 +20,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lazyssm uses the system copy tool (`pbcopy`, `clip.exe`, `wl-copy`, `xclip`
   or `xsel`); over SSH, or when none is installed, it uses the terminal's
   OSC 52 clipboard instead. Each copy uses exactly one of the two, so
-  clipboard-history tools record a single entry.
+  clipboard-history tools record a single entry ([#34]).
 - One-command installs: `install.sh` (macOS, Linux, WSL) and `install.ps1`
   (Windows) download the release archive and verify it against the release's
   `checksums.txt` before installing, plus a Homebrew tap
   (`brew install chalvinwz/tap/lazyssm`) and a Scoop bucket
   (`scoop bucket add chalvinwz https://github.com/chalvinwz/scoop-bucket`).
   `LAZYSSM_VERSION` pins a release and `LAZYSSM_INSTALL_DIR` picks the install
-  directory.
+  directory ([#35]).
+
+### Changed
+
+- Dependencies: Bubble Tea 2.0.8, Bubbles 2.1.1, Lip Gloss 2.0.5, fuzzy 0.1.3,
+  and current AWS SDK for Go v2 modules.
+- CI: every GitHub Action is pinned to a commit SHA; `actions/checkout` 5 → 7
+  ([#17]), `actions/setup-go` 6 → 7 ([#32]), `actions/upload-artifact` 4 → 7
+  ([#11]). Dependabot groups updates into one PR per ecosystem ([#35]).
+- Releases also publish the Homebrew formula and Scoop manifest, then install
+  through every channel and fail unless each reports the tagged version ([#35]).
 
 ### Fixed
 
+- govulncheck no longer fails in CI on the embedded checkout bundled with
+  `govulncheck-action` ([#20]).
 - A Name prefix in the filter bar that is shadowed by a later token is now
   reported in the status line, matching how malformed `tag:` tokens are already
   surfaced, instead of being silently dropped.
@@ -90,11 +104,18 @@ Initial public release.
 - `--profile` / `--region` global flags and `--version` output.
 - GoReleaser cross-build for linux, darwin, and windows on amd64 and arm64.
 
-[Unreleased]: https://github.com/chalvinwz/lazyssm/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/chalvinwz/lazyssm/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/chalvinwz/lazyssm/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/chalvinwz/lazyssm/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/chalvinwz/lazyssm/releases/tag/v0.1.0
 [#1]: https://github.com/chalvinwz/lazyssm/pull/1
 [#3]: https://github.com/chalvinwz/lazyssm/pull/3
 [#4]: https://github.com/chalvinwz/lazyssm/pull/4
 [#5]: https://github.com/chalvinwz/lazyssm/pull/5
+[#11]: https://github.com/chalvinwz/lazyssm/pull/11
+[#17]: https://github.com/chalvinwz/lazyssm/pull/17
 [#18]: https://github.com/chalvinwz/lazyssm/issues/18
+[#20]: https://github.com/chalvinwz/lazyssm/pull/20
+[#32]: https://github.com/chalvinwz/lazyssm/pull/32
+[#34]: https://github.com/chalvinwz/lazyssm/pull/34
+[#35]: https://github.com/chalvinwz/lazyssm/pull/35
