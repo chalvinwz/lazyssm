@@ -12,6 +12,7 @@ import (
 	"github.com/sahilm/fuzzy"
 
 	"github.com/chalvinwz/lazyssm/internal/awscfg"
+	"github.com/chalvinwz/lazyssm/internal/clipboard"
 	"github.com/chalvinwz/lazyssm/internal/inventory"
 	"github.com/chalvinwz/lazyssm/internal/preflight"
 	"github.com/chalvinwz/lazyssm/internal/session"
@@ -67,6 +68,8 @@ type Model struct {
 
 	fetchSeq int  // bumped per issued fetch; replies with a stale seq are dropped
 	demo     bool // LAZYSSM_DEMO: serve fixed sample data, never call AWS
+
+	copyText func(label, text string) (cmd tea.Cmd, viaTerminal bool) // clipboard.Copy outside tests
 }
 
 // instancesMsg carries the result of a background inventory fetch. seq ties the
@@ -96,6 +99,7 @@ func New(clients awscfg.Clients, st *store.Store, profile, region string, autoLo
 		region:      region,
 		store:       st,
 		autoLogin:   autoLogin,
+		copyText:    clipboard.Copy,
 		src:         inventory.SourceSSMOnly,
 		mode:        modeList,
 		loading:     true,
@@ -221,6 +225,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case clipboard.CopiedMsg:
+		if msg.Err != nil {
+			m.status = "copy failed: " + msg.Err.Error()
+		} else {
+			m.status = "copied " + msg.Text + " to clipboard"
+		}
+		return m, nil
+
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	}
@@ -295,6 +307,10 @@ func (m Model) keyList(key string) (tea.Model, tea.Cmd) {
 		return m, m.fetchCmd()
 	case "p":
 		return m.togglePin()
+	case "y":
+		return m.copySelected(false)
+	case "Y":
+		return m.copySelected(true)
 	case "f":
 		m.mode = modeFilter
 		m.filterInput.SetValue(m.filter.String())
@@ -395,6 +411,32 @@ func (m Model) togglePin() (tea.Model, tea.Cmd) {
 	m.applyPins(m.all)
 	m.recompute()
 	return m, nil
+}
+
+// copySelected copies the selected instance's ID, or its IP when wantIP.
+func (m Model) copySelected(wantIP bool) (tea.Model, tea.Cmd) {
+	if m.cursor >= len(m.visible) {
+		return m, nil
+	}
+	inst := m.visible[m.cursor]
+	label, text := "instance ID", inst.InstanceID
+	if wantIP {
+		label, text = "IP", inst.IP
+	}
+	if text == "" {
+		name := inst.Name
+		if name == "" {
+			name = inst.InstanceID
+		}
+		m.status = name + " has no " + label
+		return m, nil
+	}
+	cmd, viaTerminal := m.copyText(label, text)
+	if viaTerminal {
+		// OSC 52 is fire-and-forget, so there is no CopiedMsg to wait for.
+		m.status = "sent " + text + " to the terminal clipboard"
+	}
+	return m, cmd
 }
 
 func (m Model) connect() (tea.Model, tea.Cmd) {
