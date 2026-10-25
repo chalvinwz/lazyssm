@@ -1,0 +1,28 @@
+class Lazyssm < Formula
+  desc "Terminal UI for AWS SSM Session Manager"
+  homepage "https://github.com/chalvinwz/lazyssm"
+  url "https://github.com/chalvinwz/lazyssm/archive/refs/tags/{{.Tag}}.tar.gz"
+  sha256 "{{.SHA256}}"
+  license "MIT"
+  head "https://github.com/chalvinwz/lazyssm.git", branch: "main"
+
+  depends_on "go" => :build
+
+  def install
+    system "go", "build", *std_go_args(ldflags: "-s -w -X main.version=#{version}"), "./cmd/lazyssm"
+  end
+
+  def caveats
+    <<~EOS
+      lazyssm needs the AWS CLI and the Session Manager plugin at runtime:
+        brew install awscli
+        brew install --cask session-manager-plugin
+
+      Run `lazyssm doctor` to check your environment.
+    EOS
+  end
+
+  test do
+    assert_match "lazyssm #{version}", shell_output("#{bin}/lazyssm --version")
+  end
+end
