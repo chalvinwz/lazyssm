@@ -2,6 +2,7 @@ package ui
 
 import (
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 
@@ -29,7 +30,7 @@ func NewDemo(profile, region string) Model {
 
 // demoInstances returns a fixed, representative inventory for demo recordings.
 func demoInstances() []inventory.Instance {
-	return []inventory.Instance{
+	instances := []inventory.Instance{
 		{InstanceID: "i-07a1b2c3d4e5f6a7b", Name: "web-prod-1", SSMReady: true, PingStatus: "Online", State: "running", IP: "10.0.4.12", PlatformType: "Linux", AgentStatus: "Latest", Tags: map[string]string{"Env": "prod", "Team": "platform"}},
 		{InstanceID: "i-0b72aa01cc93de45f", Name: "web-prod-2", SSMReady: true, PingStatus: "Online", State: "running", IP: "10.0.4.13", PlatformType: "Linux", AgentStatus: "Latest", Tags: map[string]string{"Env": "prod", "Team": "platform"}},
 		{InstanceID: "i-0e7f1234aa5678bcd", Name: "api-prod-1", SSMReady: true, PingStatus: "Online", State: "running", IP: "10.0.5.20", PlatformType: "Linux", AgentStatus: "Latest", Tags: map[string]string{"Env": "prod", "Team": "api"}},
@@ -38,6 +39,10 @@ func demoInstances() []inventory.Instance {
 		{InstanceID: "i-0c9aa55dd66ee7788", Name: "db-staging-1", SSMReady: false, PingStatus: "ConnectionLost", State: "stopped", IP: "10.0.8.4", PlatformType: "Linux", Tags: map[string]string{"Env": "staging", "Team": "data"}},
 		{InstanceID: "i-0aa11bb22cc33dd44", Name: "bastion-legacy", SSMReady: false, State: "running", IP: "10.0.0.7", Tags: map[string]string{"Env": "prod"}},
 	}
+	for i := range instances {
+		instances[i].LaunchTime = time.Now().Add(-time.Duration(49+i*29) * time.Hour)
+	}
+	return instances
 }
 
 // filterDemo mimics server-side scoping over the sample set so the demo's filter

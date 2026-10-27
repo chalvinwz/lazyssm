@@ -5,6 +5,7 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -59,6 +60,7 @@ type Instance struct {
 	AgentStatus  string // SSM agent status; "" when not an SSM node
 	PingStatus   string // SSM ping status, e.g. "Online"
 	State        string // EC2 instance state
+	LaunchTime   time.Time
 	Tags         map[string]string
 	SSMReady     bool // online in SSM -> connectable
 	Pinned       bool
@@ -75,11 +77,12 @@ type ssmNode struct {
 }
 
 type ec2Inst struct {
-	ID    string
-	Name  string
-	IP    string
-	State string
-	Tags  map[string]string
+	LaunchTime time.Time
+	ID         string
+	Name       string
+	IP         string
+	State      string
+	Tags       map[string]string
 }
 
 // SSMAPI is the subset of the SSM client the inventory needs.
@@ -180,6 +183,7 @@ func mergeOne(id string, e *ec2Inst, n *ssmNode) Instance {
 		inst.Name = e.Name
 		inst.IP = e.IP
 		inst.State = e.State
+		inst.LaunchTime = e.LaunchTime
 		if e.Tags != nil {
 			inst.Tags = e.Tags
 		}
@@ -344,10 +348,11 @@ func fromEC2(inst ec2types.Instance) ec2Inst {
 		state = string(inst.State.Name)
 	}
 	return ec2Inst{
-		ID:    aws.ToString(inst.InstanceId),
-		Name:  tags["Name"],
-		IP:    ip,
-		State: state,
-		Tags:  tags,
+		LaunchTime: aws.ToTime(inst.LaunchTime),
+		ID:         aws.ToString(inst.InstanceId),
+		Name:       tags["Name"],
+		IP:         ip,
+		State:      state,
+		Tags:       tags,
 	}
 }

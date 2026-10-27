@@ -37,10 +37,11 @@ const (
 
 // Model is the root Bubble Tea model for lazyssm.
 type Model struct {
-	clients awscfg.Clients
-	profile string
-	region  string
-	store   *store.Store
+	clients    awscfg.Clients
+	profile    string
+	region     string
+	store      *store.Store
+	appearance *themeStyles
 
 	all     []inventory.Instance // last fetched, server-filtered set
 	visible []inventory.Instance // after fuzzy search
@@ -93,6 +94,10 @@ func New(clients awscfg.Clients, st *store.Store, profile, region string, autoLo
 	si := textinput.New()
 	si.SetVirtualCursor(true)
 	si.SetWidth(48)
+	theme := "default"
+	if st != nil {
+		theme = st.Theme
+	}
 	return Model{
 		clients:     clients,
 		profile:     profile,
@@ -105,7 +110,7 @@ func New(clients awscfg.Clients, st *store.Store, profile, region string, autoLo
 		loading:     true,
 		filterInput: fi,
 		searchInput: si,
-	}
+	}.WithTheme(theme)
 }
 
 // Init kicks off the initial fetch and credential preflight.

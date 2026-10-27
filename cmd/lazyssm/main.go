@@ -27,6 +27,7 @@ func main() {
 	profile := flag.String("profile", "", "AWS profile to use (overrides AWS_PROFILE)")
 	region := flag.String("region", "", "AWS region to use (overrides AWS_REGION)")
 	autoLogin := flag.Bool("auto-login", false, "run 'aws sso login' automatically when the SSO session is expired")
+	theme := flag.String("theme", "", "theme preset (overrides the local configuration)")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Usage = usage
 	flag.Parse()
@@ -36,11 +37,15 @@ func main() {
 		return
 	}
 
+	if *theme != "" && !ui.ValidTheme(*theme) {
+		fmt.Fprintf(os.Stderr, "unknown theme %q\n", *theme)
+		os.Exit(2)
+	}
 	switch flag.Arg(0) {
 	case "doctor":
 		os.Exit(runDoctor(*profile, *region))
 	case "", "tui":
-		os.Exit(runTUI(*profile, *region, *autoLogin))
+		os.Exit(runTUI(*profile, *region, *autoLogin, *theme))
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n\n", flag.Arg(0))
 		usage()
@@ -58,15 +63,19 @@ Usage:
 Flags:
   --profile     AWS profile (overrides AWS_PROFILE)
   --region      AWS region (overrides AWS_REGION)
+  --theme       default, tokyo-night, dracula, nord, catppuccin-mocha
   --auto-login  run 'aws sso login' automatically when the SSO session is expired
 `)
 }
 
-func runTUI(profile, region string, autoLogin bool) int {
+func runTUI(profile, region string, autoLogin bool, theme string) int {
 	// Demo mode (LAZYSSM_DEMO=1) serves fixed sample data without touching AWS,
 	// for recording screenshots/GIFs.
 	if os.Getenv("LAZYSSM_DEMO") != "" {
 		m := ui.NewDemo(profile, region)
+		if theme != "" {
+			m = m.WithTheme(theme)
+		}
 		if _, err := tea.NewProgram(m).Run(); err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			return 1
@@ -87,6 +96,9 @@ func runTUI(profile, region string, autoLogin bool) int {
 		st, _ = store.LoadFrom("") // in-memory fallback
 	}
 	m := ui.New(clients, st, profile, region, autoLogin || st.AutoLogin)
+	if theme != "" {
+		m = m.WithTheme(theme)
+	}
 	if _, err := tea.NewProgram(m).Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1

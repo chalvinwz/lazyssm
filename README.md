@@ -40,6 +40,10 @@ for the one task you repeat all day: find the instance and connect.
   fetched set; navigate results with arrow keys while typing.
 - **Toggle source** — switch between SSM-managed nodes only (default) and all
   EC2 instances; non-SSM instances are shown as not-ready.
+- **Instance age and state**: the detail sidebar shows age and colored EC2 state.
+  The list shows name, age, and SSM readiness by default.
+  Configure additional columns, including IP and EC2 state, in the local config file.
+- **Theme presets**: choose default, Tokyo Night, Dracula, Nord, or Catppuccin Mocha.
 - **Pin favorites** — pinned instance IDs are persisted as YAML locally and
   float to the top of the list on every launch.
 - **One-key connect** — `Enter` hands the terminal to `aws ssm start-session`;
@@ -230,6 +234,7 @@ lazyssm --version
 | `--profile`    | (AWS default)     | AWS profile; overrides `AWS_PROFILE`                     |
 | `--region`     | (AWS default)     | AWS region; overrides `AWS_REGION`                       |
 | `--auto-login` | off               | Run `aws sso login` automatically on SSO session expiry  |
+| `--theme`      | (local config)    | Theme preset for this launch                            |
 | `--version`    | —                 | Print version string and exit                            |
 
 ### Making a profile permanent
@@ -324,6 +329,85 @@ pinned:
   - i-0a1b2c3d4e5f6a7b8
   - i-0deadbeefcafe1234
 ```
+
+### Appearance
+
+Set `theme` in the same config file:
+
+```yaml
+theme: dracula
+transparent_background: true
+auto_login: true
+pinned:
+  - i-0a1b2c3d4e5f6a7b8
+```
+
+| Setting | Default | Effect |
+| ------- | ------- | ------ |
+| `theme` | `default` | Select the color preset. |
+| `transparent_background` | `false` | Use the terminal background when `true`. |
+| `columns` | `[name, age, ssm]` | Select list columns and their order. |
+| `auto_login` | `false` | Start SSO login when the session expires. |
+| `pinned` | `[]` | Store favorite instance IDs. |
+
+Preset values are `default`, `tokyo-night`, `dracula`, `nord`, and `catppuccin-mocha`.
+The default preset keeps the original AWS orange palette and terminal background.
+The other presets use the same dark background for panel content and borders.
+Set `transparent_background: true` to use the terminal background with any theme.
+Text and border colors stay the same. The selected row keeps its highlight.
+This preference also applies when `--theme` overrides the configured theme.
+
+Use `lazyssm --theme dracula` to override the preset for one launch.
+The flag does not change the config file. Pin changes preserve the configured theme and `auto_login`.
+Pin changes also preserve `transparent_background`.
+An unknown config preset uses `default`. An unknown flag value reports an error.
+
+### List columns
+
+Set `columns` to choose list columns and their order. For example:
+
+```yaml
+columns: [name, ip, state, age, ssm]
+```
+
+| Column | Value |
+| ------ | ----- |
+| `name` | EC2 Name tag. |
+| `ip` | Instance IP address. |
+| `state` | EC2 state. |
+| `age` | Time since the EC2 launch time. |
+| `ssm` | SSM readiness indicator. |
+| `id` | Instance ID. |
+| `os` | Platform type. |
+| `agent` | SSM agent status. |
+| `ping` | SSM ping status. |
+
+Without this setting, the list shows `name`, `age`, and `ssm`.
+The name reserves space for the longest name in the filtered list, with a minimum of 16 characters.
+Optional columns disappear from right to left when the window narrows.
+The SSM indicator disappears last if it prevents the full name from fitting.
+The name is shortened only when it cannot fit within the panel on its own.
+Place important optional columns earlier in the list to keep them visible longer.
+The example above prioritizes IP and state over age.
+Widen the terminal to show hidden columns again.
+
+The name is always included. If omitted, it appears first.
+Unknown columns and duplicates are ignored. An empty or entirely unknown list uses the default columns.
+Pin changes preserve the column setting. Search continues to match instance names.
+The detail sidebar keeps its age and colored state, regardless of the list columns.
+The selected row uses one solid highlight across all columns.
+
+Age uses the EC2 `LaunchTime` value. It is not operating-system uptime or the original creation date.
+A stop/start cycle can change the launch time. A reboot does not reset it.
+The display shows minutes, hours and minutes, or days and hours.
+Missing launch times show `—`. Future launch times show `0m`.
+Age updates when the screen renders. Press `r` to refresh the inventory.
+
+EC2 state uses the AWS names, including `shutting-down` during termination.
+Green marks `running`. Amber marks `pending`, `stopping`, and `shutting-down`.
+Red marks `stopped` and `terminated`. Unknown state uses a dim `—`.
+The separate SSM indicator uses `●` for ready and `○` for not ready.
+State text and readiness symbols remain visible without color.
 
 ### Credential precedence
 

@@ -1,4 +1,4 @@
-// Package store persists local lazyssm state (pinned instances) as YAML under
+// Package store persists local lazyssm configuration as YAML under
 // the OS-correct user config directory.
 package store
 
@@ -15,9 +15,12 @@ import (
 const appDir = "lazyssm"
 const fileName = "config.yaml"
 
-// Store holds persisted state. Pinned is the set of pinned instance IDs.
+// Store holds persisted pins and preferences.
 type Store struct {
-	Pinned []string `yaml:"pinned"`
+	Pinned                []string `yaml:"pinned"`
+	Theme                 string   `yaml:"theme,omitempty"`
+	TransparentBackground bool     `yaml:"transparent_background,omitempty"`
+	Columns               []string `yaml:"columns,omitempty"`
 	// AutoLogin persistently enables running `aws sso login` when the SSO
 	// session expires (equivalent to the --auto-login flag). omitempty keeps
 	// pin-toggle saves from injecting the key into configs that never set it.
