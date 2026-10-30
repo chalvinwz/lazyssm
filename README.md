@@ -30,6 +30,9 @@ for the one task you repeat all day: find the instance and connect.
 
 - **Persistent panel TUI** — the instance list stays open between sessions; no
   re-invoking a picker on every connect.
+- **Profile and region switching** — `P` and `R` list your AWS profiles and
+  regions; lazyssm reconnects in place, shows the account ID in the title bar,
+  and remembers the last profile and the region you last used with each one.
 - **Merged inventory** — SSM `DescribeInstanceInformation` is joined with EC2
   `DescribeInstances` so you see Name tags, IPs, and instance state alongside
   SSM agent status. On-premises and other non-EC2 nodes (`mi-…`) show the name
@@ -248,6 +251,31 @@ lazyssm
 Any profile set via the environment is picked up automatically; `--profile`
 takes precedence over `AWS_PROFILE` when both are set.
 
+### Switching profile and region
+
+Press `P` to pick another profile from `~/.aws/config` and `~/.aws/credentials`
+(or the files named by `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE`),
+or `R` to pick a region. Type to filter, `Enter` to switch, `Esc` to cancel.
+Profiles match by name or account ID; regions match by code or name, so
+`jakarta` finds `ap-southeast-3` and `sao paulo` finds São Paulo.
+lazyssm builds new AWS clients, re-checks your credentials and reloads the list
+without restarting. The title bar shows the profile, its account ID and the
+region.
+
+A profile opens in the region you last used with it, else the region set in
+the profile, else the region on screen. The detail panel says which. The region
+picker lists the 34 commercial regions; to use one that isn't listed, such as a
+newly launched region, type its full code and press `Enter`.
+
+A switch is saved only once instances load there. If the new profile or
+region is denied, for example by an organization policy that allows only some
+regions, lazyssm stays on it and explains why (see
+[When a fetch fails](#when-a-fetch-fails)), but the profile won't reopen there
+and the next launch won't start there.
+
+The next launch starts where you left off; see
+[Credential precedence](#credential-precedence).
+
 ---
 
 ## Filtering and Search
@@ -305,6 +333,10 @@ focused you can navigate the narrowed results live with `↑`/`↓` (or
 | `p`              | Pin / unpin selected instance                |
 | `y` / `Y`        | Copy selected instance ID / IP to clipboard  |
 | `r`              | Refresh inventory from AWS                   |
+| `P`              | Switch AWS profile                           |
+| `R`              | Switch AWS region                            |
+| `L`              | Sign in to AWS SSO (`aws sso login`)         |
+| `e`              | Show / hide the full error of the last fetch |
 | `Enter`          | Connect to selected instance (SSM shell)     |
 | `?`              | Toggle keybinding help overlay               |
 | `q` / `Ctrl+C`   | Quit                                         |
@@ -313,37 +345,53 @@ focused you can navigate the narrowed results live with `↑`/`↓` (or
 
 ## Configuration
 
-### Pinned instances (local store)
+### Files
 
-Pins are persisted as YAML at:
+lazyssm keeps two YAML files in one folder:
 
-| OS      | Path                                              |
-| ------- | ------------------------------------------------- |
-| macOS   | `~/Library/Application Support/lazyssm/config.yaml` |
-| Linux   | `~/.config/lazyssm/config.yaml`                   |
-| Windows | `%AppData%\lazyssm\config.yaml`                   |
+| OS      | Folder                                   |
+| ------- | ---------------------------------------- |
+| macOS   | `~/Library/Application Support/lazyssm/` |
+| Linux   | `~/.config/lazyssm/`                     |
+| Windows | `%AppData%\lazyssm\`                     |
 
-The exact path is resolved by `os.UserConfigDir()` at runtime. The file is
-created automatically on first pin; deleting it resets all pins.
+- `config.yaml` holds your settings, described below. lazyssm only reads it,
+  so your comments and formatting stay as you wrote them.
+- `state.yaml` holds what lazyssm saves itself: pinned instance IDs, the last
+  profile, and the region last used with each profile. Delete it to reset all
+  three.
 
-Example file:
+The folder is resolved by `os.UserConfigDir()` at runtime. The macOS folder
+name contains a space, so quote it in a shell:
+
+```sh
+cat ~/"Library/Application Support/lazyssm/config.yaml"
+```
+
+Example `state.yaml`:
 
 ```yaml
 pinned:
   - i-0a1b2c3d4e5f6a7b8
-  - i-0deadbeefcafe1234
+last_profile: prod
+profile_regions:
+  prod: eu-west-1
+  dev: ap-southeast-3
 ```
+
+Upgrading from 0.4 or earlier: pins used to be saved in `config.yaml`. lazyssm
+reads them from there until it first saves `state.yaml` (your first pin,
+unpin or switch). After that the old `pinned` key in `config.yaml` is ignored
+and can be deleted.
 
 ### Appearance
 
-Set `theme` in the same config file:
+Set `theme` in `config.yaml`:
 
 ```yaml
 theme: dracula
 transparent_background: true
 auto_login: true
-pinned:
-  - i-0a1b2c3d4e5f6a7b8
 ```
 
 | Setting | Default | Effect |
@@ -352,7 +400,6 @@ pinned:
 | `transparent_background` | `false` | Use the terminal background when `true`. |
 | `columns` | `[name, age, ssm]` | Select list columns and their order. |
 | `auto_login` | `false` | Start SSO login when the session expires. |
-| `pinned` | `[]` | Store favorite instance IDs. |
 
 Preset values are `default`, `tokyo-night`, `dracula`, `nord`, and `catppuccin-mocha`.
 The default preset keeps the original AWS orange palette and terminal background.
@@ -362,8 +409,7 @@ Text and border colors stay the same. The selected row keeps its highlight.
 This preference also applies when `--theme` overrides the configured theme.
 
 Use `lazyssm --theme dracula` to override the preset for one launch.
-The flag does not change the config file. Pin changes preserve the configured theme and `auto_login`.
-Pin changes also preserve `transparent_background`.
+The flag does not change the config file.
 An unknown config preset uses `default`. An unknown flag value reports an error.
 
 ### List columns
@@ -397,7 +443,7 @@ Widen the terminal to show hidden columns again.
 
 The name is always included. If omitted, it appears first.
 Unknown columns and duplicates are ignored. An empty or entirely unknown list uses the default columns.
-Pin changes preserve the column setting. Search continues to match instance names.
+Search continues to match instance names.
 The detail sidebar keeps its age and colored state, regardless of the list columns.
 The selected row uses one solid highlight across all columns.
 
@@ -416,11 +462,26 @@ State text and readiness symbols remain visible without color.
 ### Credential precedence
 
 1. `--profile` / `--region` flags
-2. `AWS_PROFILE` / `AWS_REGION` environment variables
-3. AWS shared config (`~/.aws/config`, `~/.aws/credentials`)
+2. `AWS_PROFILE` / `AWS_REGION` (or `AWS_DEFAULT_REGION`) environment variables
+3. The profile you last switched to with `P`, and the region you last used
+   with the profile being opened (from `state.yaml`)
+4. AWS shared config (`~/.aws/config`, `~/.aws/credentials`)
 
-SSO profiles are supported. If `lazyssm doctor` reports an expired SSO
-session, refresh it with:
+If the saved profile has since been removed from your AWS config, lazyssm
+prints a warning and starts with the default profile. A profile named by
+`--profile` or `AWS_PROFILE` that isn't there stops lazyssm instead, with the
+closest profile names it found. So does a region that can't be a region code,
+whether from `--region`, the environment or the profile: `--region sydney`
+suggests `ap-southeast-2`. A well-formed code lazyssm doesn't list yet, such as
+a newly launched region, is used as given. `lazyssm doctor` uses
+only flags and the environment.
+
+SSO profiles are supported. When the SSO session has expired, or you haven't
+signed in yet, the list panel says so for the current profile. Press `L` to
+sign in: lazyssm suspends, runs `aws sso login --profile <profile>` (which
+opens your browser), then re-checks your credentials and reloads the list.
+Outside lazyssm, `lazyssm doctor` reports the same and the same command fixes
+it:
 
 ```sh
 aws sso login --profile <profile>
@@ -428,7 +489,7 @@ aws sso login --profile <profile>
 
 ### Automatic SSO login
 
-With `--auto-login`, lazyssm handles the expired session itself: when the
+With `--auto-login`, lazyssm signs in without waiting for `L`: when the
 startup credential check or an inventory refresh fails because the SSO session
 is expired, the TUI suspends, hands the terminal to `aws sso login` (passing
 your `--profile`/`--region`; with no `--profile`, the aws CLI honors
@@ -442,8 +503,8 @@ auto_login: true
 ```
 
 One login attempt is made per expiry: if credentials still fail afterwards
-(login cancelled, wrong profile), the preflight screen appears as usual instead
-of looping. `lazyssm doctor` never auto-logins — it only reports.
+(login cancelled, wrong profile), the list panel shows the expiry and `L`
+instead of looping. `lazyssm doctor` never auto-logins — it only reports.
 
 ---
 
@@ -485,6 +546,29 @@ Minimal example policy:
 }
 ```
 
+### When a fetch fails
+
+When lazyssm can't list instances, the list panel says what went wrong in plain
+words, and the status line gives a one-line summary. For an access denial it
+names the action, the kind of policy that blocked it (for example a service
+control policy set by your AWS organization) and the policy ID when AWS gives
+one. lazyssm also recognizes missing or rejected credentials (including a
+region the account hasn't opted into), a failing `credential_process`, a role
+the profile can't assume or an SSO role you aren't assigned, an expired SSO
+session, a missing region, throttling, timeouts and unreachable endpoints. An
+expired SSO session names the profile and offers `L` to sign in; see
+[Credential precedence](#credential-precedence).
+
+Press `e` to see the full error as AWS sent it, with the request ID, in the
+detail panel; `y` copies it for a ticket to your AWS admin. `e` or `Esc` closes
+it. A previous successful list stays on screen while the error is shown.
+
+Connecting and signing in hand the terminal to the AWS CLI, which prints its
+own errors. lazyssm keeps the end of that output, so when `aws ssm
+start-session` or `aws sso login` fails, the status line explains why once
+lazyssm is back (for example `couldn't connect to web-1: instance not connected
+to SSM`), and `e` shows what the CLI printed.
+
 ---
 
 ## Development
@@ -525,8 +609,10 @@ go test ./...
 The test suite covers the filter parser (`internal/ui`), fuzzy search
 behaviour (`internal/ui`), the TUI `Update` state machine (`internal/ui`),
 inventory merge logic and context-deadline handling (`internal/inventory`),
-preflight checks (`internal/preflight`), the pin store (`internal/store`), and
-session argument construction (`internal/session`).
+preflight checks (`internal/preflight`), the config and state store
+(`internal/store`), AWS profile parsing (`internal/awscfg`), startup profile
+selection (`cmd/lazyssm`), and session argument construction
+(`internal/session`).
 
 ### CI
 

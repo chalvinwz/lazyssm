@@ -12,10 +12,11 @@ import (
 type SessionEndedMsg struct {
 	InstanceID string
 	Err        error
+	Output     string // the tail of what the CLI wrote to stderr
 }
 
-// buildArgs assembles the `aws ssm start-session` arguments, threading the
-// active profile/region so the session matches the browsed inventory.
+// buildArgs returns the `aws ssm start-session` arguments, passing the active
+// profile and region so the session matches the browsed inventory.
 func buildArgs(instanceID, profile, region string) []string {
 	args := []string{"ssm", "start-session", "--target", instanceID}
 	if profile != "" {
@@ -29,10 +30,11 @@ func buildArgs(instanceID, profile, region string) []string {
 
 // ConnectCmd returns a tea.Cmd that suspends the TUI, runs
 // `aws ssm start-session --target <instanceID>` with the terminal attached, and
-// emits a SessionEndedMsg when the session exits (restoring the TUI).
+// emits a SessionEndedMsg when the session exits and the TUI resumes.
 func ConnectCmd(instanceID, profile, region string) tea.Cmd {
 	cmd := exec.Command("aws", buildArgs(instanceID, profile, region)...)
+	tail := captureStderr(cmd)
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
-		return SessionEndedMsg{InstanceID: instanceID, Err: err}
+		return SessionEndedMsg{InstanceID: instanceID, Err: err, Output: tail.String()}
 	})
 }

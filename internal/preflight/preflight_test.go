@@ -72,11 +72,11 @@ func TestIsSSOExpired(t *testing.T) {
 		"the SSO session associated with this profile has expired": true,
 		"sso token is invalid, please re-authenticate":             true,
 		"failed to refresh cached credentials, token expired":      true,
-		// after `aws sso logout` the cache file is deleted, not expired
+		// After `aws sso logout` the cache file is deleted, not expired.
 		"operation error STS: GetCallerIdentity, get identity: get credentials: failed to refresh cached credentials, failed to read cached SSO token file, open /home/u/.aws/sso/cache/abc.json: no such file or directory": true,
 		"AccessDenied: not authorized": false,
 		"no EC2 IMDS role found":       false,
-		// missing non-SSO file must not classify as SSO-expired
+		// A missing non-SSO file must not count as an expired SSO session.
 		"failed to load config, open /home/u/.aws/config: no such file or directory": false,
 	}
 	for msg, want := range cases {
@@ -95,6 +95,12 @@ func TestIsSSOExpiredTypedCode(t *testing.T) {
 	other := &smithy.GenericAPIError{Code: "AccessDeniedException", Message: "not authorized"}
 	if IsSSOExpired(other) {
 		t.Error("AccessDeniedException should not be treated as SSO-expired")
+	}
+	// A region the account has not opted into answers this way; its "token …
+	// invalid" wording must not trip the text heuristic.
+	optIn := &smithy.GenericAPIError{Code: "UnrecognizedClientException", Message: "The security token included in the request is invalid."}
+	if IsSSOExpired(optIn) {
+		t.Error("UnrecognizedClientException should not be treated as SSO-expired")
 	}
 }
 
@@ -115,6 +121,18 @@ func TestCheckRegion(t *testing.T) {
 	}
 	if c := CheckRegion("us-east-1"); !c.OK || c.Detail != "us-east-1" {
 		t.Errorf("region check = %+v", c)
+	}
+}
+
+func TestCheckRegionShape(t *testing.T) {
+	if c := CheckRegion("haha"); c.OK {
+		t.Error("haha is not a region code")
+	}
+	if c := CheckRegion("ap-southeast3"); c.OK || !strings.Contains(c.Fix, "ap-southeast-3 (Asia Pacific (Jakarta))") {
+		t.Errorf("a near miss should suggest the code, got %+v", c)
+	}
+	if c := CheckRegion("eu-north-9"); !c.OK {
+		t.Error("a well-formed code may be a region newer than lazyssm's list")
 	}
 }
 

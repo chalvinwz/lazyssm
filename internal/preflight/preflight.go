@@ -1,20 +1,21 @@
-// Package preflight verifies external binaries and AWS credentials/SSO.
-//
-// Checks are intentionally version-free: lazyssm verifies that a binary is
-// present and runnable, never which version it is, so install guidance never
-// goes stale. Guidance anchors on the stable AWS documentation URLs plus a
-// high-stability convenience command; lazyssm never auto-installs.
+// Package preflight checks the external binaries, region and AWS credentials
+// lazyssm needs. Binary checks test only that a binary runs, never its version,
+// so install guidance (stable AWS docs URLs and a brew command) does not go
+// stale. lazyssm never installs anything itself.
 package preflight
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os/exec"
 	"runtime"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/smithy-go"
+
+	"github.com/chalvinwz/lazyssm/internal/awscfg"
 )
 
 const (
@@ -26,12 +27,14 @@ const (
 type Check struct {
 	Name string
 	OK   bool
-	// Binary marks checks that probe an external binary (aws CLI, plugin), so a
-	// cached result set can be reused without re-spawning subprocesses.
+	// Binary marks a check that probes an external binary, so a cached result
+	// set can be reused without spawning the binaries again.
 	Binary bool
-	// SSOExpired marks an identity failure caused by an expired/invalid SSO
+	// SSOExpired marks an identity failure caused by an expired or invalid SSO
 	// session, so callers can trigger auto-login without matching Detail text.
 	SSOExpired bool
+	// Account is the AWS account ID a passing identity check resolved.
+	Account string
 	// Detail describes the resolved state when OK, or the problem when not.
 	Detail string
 	// Fix is actionable guidance shown when OK is false.
@@ -50,8 +53,7 @@ type Params struct {
 	STS     STSAPI
 }
 
-// Seams over os/exec so the binary-probe path is unit-testable without real
-// binaries on PATH. Tests swap these and restore them with defer.
+// Seams over os/exec, swapped by tests so binary checks need no real binaries.
 var (
 	lookPath   = exec.LookPath
 	runVersion = func(name string) error { return exec.Command(name, "--version").Run() }
@@ -130,9 +132,8 @@ func SSOExpiredFrom(checks []Check) bool {
 	return false
 }
 
-// CheckIdentity validates that credentials resolve to a usable identity via
-// sts:GetCallerIdentity, distinguishing an expired SSO session from a generic
-// credentials failure.
+// CheckIdentity verifies through sts:GetCallerIdentity that the credentials
+// resolve, telling an expired SSO session apart from other failures.
 func CheckIdentity(ctx context.Context, p Params) Check {
 	c := Check{Name: "AWS identity"}
 	if p.STS == nil {
@@ -153,15 +154,26 @@ func CheckIdentity(ctx context.Context, p Params) Check {
 		return c
 	}
 	c.OK = true
-	acct := ""
 	if out.Account != nil {
-		acct = *out.Account
+		c.Account = *out.Account
 	}
-	c.Detail = "account " + acct + " (profile " + orDefault(p.Profile) + ")"
+	c.Detail = "account " + c.Account + " (profile " + orDefault(p.Profile) + ")"
 	return c
 }
 
-// CheckRegion verifies a region was resolved.
+// AccountFrom returns the account ID from an already-run result set, or "" when
+// the identity check did not resolve one.
+func AccountFrom(checks []Check) string {
+	for _, c := range checks {
+		if c.Account != "" {
+			return c.Account
+		}
+	}
+	return ""
+}
+
+// CheckRegion verifies a region was resolved and looks like a region code. A
+// well-formed code lazyssm does not list passes, since AWS adds regions.
 func CheckRegion(region string) Check {
 	if region == "" {
 		return Check{
@@ -170,27 +182,49 @@ func CheckRegion(region string) Check {
 			Fix:    "pass --region, set AWS_REGION, or set region in your profile",
 		}
 	}
+	if !awscfg.LooksLikeRegion(region) {
+		c := Check{Name: "AWS region", Detail: fmt.Sprintf("%q isn't an AWS region code", region), Fix: "region codes look like ap-southeast-3"}
+		if near := RegionHint(region); near != "" {
+			c.Fix = "did you mean " + near + "?"
+		}
+		return c
+	}
 	return Check{Name: "AWS region", OK: true, Detail: region}
 }
 
-// IsSSOExpired detects an expired/invalid SSO token from an error. It prefers
-// the typed AWS error code when present and falls back to a text heuristic for
-// credential-chain errors that aren't surfaced as smithy APIErrors. Exported so
-// the UI can classify mid-session fetch errors, not just preflight failures.
+// RegionHint names the regions a value that is not a region code most likely
+// meant, such as "ap-southeast-3 (Asia Pacific (Jakarta))", or "" for none.
+func RegionHint(region string) string {
+	var names []string
+	for _, r := range awscfg.SuggestRegions(region) {
+		names = append(names, r.Code+" ("+r.Name+")")
+	}
+	return strings.Join(names, ", ")
+}
+
+// IsSSOExpired reports whether err comes from an expired or invalid SSO token.
+// It prefers the AWS error code and falls back to matching the text of
+// credential-chain errors that are not smithy APIErrors. It is exported so the
+// UI can classify mid-session fetch errors too.
 func IsSSOExpired(err error) bool {
 	var apiErr smithy.APIError
 	if errors.As(err, &apiErr) {
 		switch apiErr.ErrorCode() {
 		case "ExpiredToken", "ExpiredTokenException":
 			return true
+		case "UnrecognizedClientException", "InvalidClientTokenId", "AuthFailure":
+			// "The security token included in the request is invalid": bad
+			// keys or a region the account has not opted into, not an expired
+			// SSO session, so signing in again would not help.
+			return false
 		}
 	}
 	s := strings.ToLower(err.Error())
 	if !strings.Contains(s, "sso") && !strings.Contains(s, "token") {
 		return false
 	}
-	// A missing/unreadable cached SSO token (e.g. after `aws sso logout`
-	// removes the cache file) needs the same remedy as an expired one.
+	// A missing or unreadable cached SSO token, as after `aws sso logout`
+	// removes the cache file, needs the same remedy as an expired one.
 	if strings.Contains(s, "sso") &&
 		(strings.Contains(s, "no such file") || strings.Contains(s, "failed to read")) {
 		return true
@@ -215,7 +249,7 @@ func orDefault(profile string) string {
 	return profile
 }
 
-// Run executes the full check set: binaries, identity, region.
+// Run executes the full check set: binaries, region, identity.
 func Run(ctx context.Context, p Params) []Check {
 	checks := CheckBinaries()
 	checks = append(checks, CheckRegion(p.Region))

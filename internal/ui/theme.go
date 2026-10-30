@@ -87,7 +87,8 @@ func (m Model) styles() themeStyles {
 	return *m.appearance
 }
 
-// WithTheme overrides the appearance without changing the persisted configuration.
+// WithTheme overrides the appearance without changing the persisted
+// configuration.
 func (m Model) WithTheme(name string) Model {
 	transparent := m.store != nil && m.store.TransparentBackground
 	s := makeStyles(name, transparent)
@@ -101,6 +102,7 @@ func (m Model) WithTheme(name string) Model {
 	}
 	m.filterInput.SetStyles(inputStyles)
 	m.searchInput.SetStyles(inputStyles)
+	m.pickerInput.SetStyles(inputStyles)
 	return m
 }
 
