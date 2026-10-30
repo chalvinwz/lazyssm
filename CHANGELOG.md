@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-30
+
 ### Added
 
 - Instance age and colored EC2 state in the detail sidebar; configurable list
@@ -18,23 +20,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - The inventory fetch asks SSM for 50 nodes per page instead of the default 10,
-  and queries SSM and EC2 at the same time.
+  and queries SSM and EC2 at the same time ([#38]).
 - Dependencies: Bubbles 2.2.1, Bubble Tea 2.1.0, Lip Gloss 2.0.6,
   aws-sdk-go-v2/config 1.33.9, smithy-go 1.28.6 ([#36]).
 
 ### Fixed
 
 - Typing in the search bar moves the highlight to the best match. It used to
-  stay on the previous row number, so `Enter` could connect to a weaker match.
+  stay on the previous row number, so `Enter` could connect to a weaker match
+  ([#38]).
 - Pinning, unpinning and refreshing keep the same instance selected instead of
-  the same row number, so a second `p` no longer lands on a different instance.
+  the same row number, so a second `p` no longer lands on a different instance
+  ([#38]).
 - SSM-only browsing works without `ec2:DescribeInstances`, as the README already
   said: nodes are listed by hostname and the status line names what is missing.
-  It used to fail the whole fetch.
+  It used to fail the whole fetch ([#38]).
 - Sessions open in the region lazyssm resolved for the inventory on screen, not
-  only the one given with `--region`.
+  only the one given with `--region` ([#38]).
 - On-premises and other non-EC2 nodes (`mi-…`) show their registered name or
-  hostname instead of "(no Name)".
+  hostname instead of "(no Name)" ([#38]).
 
 ## [0.3.0] - 2026-10-25
 
@@ -133,7 +137,8 @@ Initial public release.
 - `--profile` / `--region` global flags and `--version` output.
 - GoReleaser cross-build for linux, darwin, and windows on amd64 and arm64.
 
-[Unreleased]: https://github.com/chalvinwz/lazyssm/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/chalvinwz/lazyssm/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/chalvinwz/lazyssm/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/chalvinwz/lazyssm/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/chalvinwz/lazyssm/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/chalvinwz/lazyssm/releases/tag/v0.1.0
@@ -150,3 +155,4 @@ Initial public release.
 [#34]: https://github.com/chalvinwz/lazyssm/pull/34
 [#35]: https://github.com/chalvinwz/lazyssm/pull/35
 [#36]: https://github.com/chalvinwz/lazyssm/pull/36
+[#38]: https://github.com/chalvinwz/lazyssm/pull/38
