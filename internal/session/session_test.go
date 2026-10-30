@@ -37,9 +37,8 @@ func TestBuildArgsRegionOnly(t *testing.T) {
 	}
 }
 
-// TestBuildArgsKeepsInstanceIDAsSingleArg documents the no-shell safety:
-// exec.Command runs aws directly (no /bin/sh), so even shell metacharacters in
-// the target ID stay one literal argv element — never split or interpreted.
+// TestBuildArgsKeepsInstanceIDAsSingleArg guards the no-shell safety: aws runs
+// without a shell, so shell metacharacters in the ID stay one literal argument.
 func TestBuildArgsKeepsInstanceIDAsSingleArg(t *testing.T) {
 	id := `i-1"; rm -rf / #`
 	got := buildArgs(id, "", "")

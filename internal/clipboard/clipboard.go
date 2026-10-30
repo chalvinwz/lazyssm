@@ -1,6 +1,5 @@
-// Package clipboard copies short text (instance IDs, IPs) to the user's
-// clipboard using exactly one mechanism per copy, so clipboard-history
-// managers record a single entry.
+// Package clipboard copies short text to the user's clipboard through exactly
+// one mechanism per copy, so clipboard-history managers record a single entry.
 package clipboard
 
 import (
@@ -14,8 +13,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// toolTimeout bounds a copy-tool run so a wedged xclip can't hang the command.
-// A variable so tests can allow for slow process start-up on a loaded host.
+// toolTimeout bounds a copy-tool run so a wedged xclip cannot hang the command.
+// It is a variable so tests can allow for slow start-up on a loaded host.
 var toolTimeout = 3 * time.Second
 
 // CopiedMsg reports the outcome of a copy made with the platform's copy tool.
@@ -43,8 +42,7 @@ func Copy(label, text string) (cmd tea.Cmd, viaTerminal bool) {
 	}, false
 }
 
-// Seams over the host so tool selection is unit-testable on any platform.
-// Tests swap these and restore them via t.Cleanup.
+// Host seams, swapped by tests so tool selection is testable on any platform.
 var (
 	goos     = runtime.GOOS
 	getenv   = os.Getenv

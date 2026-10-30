@@ -12,19 +12,19 @@ import (
 
 const workflowDir = "../.github/workflows"
 
-// workflowPatterns match every workflow file GitHub runs: it reads both
+// workflowPatterns match every workflow file GitHub runs, since it reads both
 // extensions.
 var workflowPatterns = []string{"*.yml", "*.yaml"}
 
-// usesLine picks out the lines the pin check applies to: a `uses:` key,
-// also as a list item, whatever the spacing (`-  uses:` too).
+// usesLine matches the lines the pin check applies to: a `uses:` key, bare or
+// as a list item, with any spacing.
 var usesLine = regexp.MustCompile(`^\s*-?\s*uses:`)
 
 // pinnedUses is the only accepted shape of a `uses:` line: owner/repo@<full
 // 40-hex commit SHA> followed by the human-readable version as a comment.
 var pinnedUses = regexp.MustCompile(`^\s*-?\s*uses:\s*[\w.-]+/[\w./-]+@[0-9a-f]{40}\s+#\s+v\d+\.\d+\.\d+\s*$`)
 
-// exactGoReleaser is a fully specified GoReleaser release tag. Quotes are
+// exactGoReleaser matches a fully specified GoReleaser release tag. Quotes are
 // stripped before matching.
 var exactGoReleaser = regexp.MustCompile(`^v2\.\d+\.\d+$`)
 
@@ -82,9 +82,8 @@ func TestWorkflowActionsPinnedBySHA(t *testing.T) {
 	}
 }
 
-// TestWorkflowPinCheckSeesEveryUsesLine checks the pin check itself: it
-// must read .yaml files as well as .yml, and a `uses:` line however it is
-// spaced.
+// TestWorkflowPinCheckSeesEveryUsesLine checks the pin check itself: it must
+// read .yaml files as well as .yml, and a `uses:` line however it is spaced.
 func TestWorkflowPinCheckSeesEveryUsesLine(t *testing.T) {
 	dir := t.TempDir()
 	pinned := "      - uses: actions/checkout@" + strings.Repeat("0", 40) + " # v7.0.1\n"

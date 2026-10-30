@@ -9,8 +9,8 @@ import (
 )
 
 func TestRecomputeFiltersByName(t *testing.T) {
-	// Instance IDs contain the digit 7; the search must NOT match rows via the
-	// ID (regression: "group7" previously matched every row through hex IDs).
+	// Instance IDs contain the digit 7, and the search must not match rows
+	// through them: "group7" once matched every row via the hex IDs.
 	all := []inventory.Instance{
 		{Name: "Group7-app-public", InstanceID: "i-07a1"},
 		{Name: "Group7-app-private", InstanceID: "i-0b72"},

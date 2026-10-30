@@ -20,7 +20,7 @@ func TestBuildEC2Filters(t *testing.T) {
 		NamePrefix: "web-",
 	}
 	got := buildEC2Filters(f)
-	// Tags sorted (App, Env) then Name prefix.
+	// Tags come sorted (App, Env), then the Name prefix.
 	if len(got) != 3 {
 		t.Fatalf("want 3 filters, got %d", len(got))
 	}
@@ -62,7 +62,7 @@ func TestMergeBoth(t *testing.T) {
 }
 
 func TestMergeSSMOnlyHybridNoEC2(t *testing.T) {
-	// Hybrid/on-prem node present in SSM but not EC2; included when no filter.
+	// A hybrid node in SSM but not EC2 is included when no filter is set.
 	ssmNodes := []ssmNode{{ID: "mi-1", PingStatus: "Online", PlatformType: "Linux"}}
 	got := merge(ssmNodes, nil, SourceSSMOnly, false)
 	if len(got) != 1 || got[0].InstanceID != "mi-1" {
@@ -74,7 +74,7 @@ func TestMergeSSMOnlyHybridNoEC2(t *testing.T) {
 }
 
 func TestMergeSSMOnlyFilterDropsNonEC2(t *testing.T) {
-	// With an active filter, an SSM node missing from the filtered EC2 set is dropped.
+	// With a filter active, an SSM node missing from the EC2 results is dropped.
 	ssmNodes := []ssmNode{
 		{ID: "i-1", PingStatus: "Online"},
 		{ID: "i-2", PingStatus: "Online"},
@@ -347,7 +347,7 @@ func TestSortPrecedenceAndIDFallback(t *testing.T) {
 		{InstanceID: "mi-9"}, // empty name → sort by InstanceID, not ready
 	}
 	Sort(in)
-	// pinned first, then SSMReady; within not-ready, name "mi-9" < "web-2".
+	// Pinned first, then SSMReady; among the not-ready, "mi-9" < "web-2".
 	wantIDs := []string{"i-1", "i-2", "mi-9", "i-3"}
 	for i, w := range wantIDs {
 		if in[i].InstanceID != w {

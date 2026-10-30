@@ -29,19 +29,19 @@ const (
 	pubSHA = "3d2f0c5b7e9a8f6d4c1b0a9e8d7c6b5a4f3e2d1c"
 )
 
-// pubLocal is the file being published.
+// pubLocal is the content of the file being published.
 var pubLocal = []byte("class Lazyssm < Formula\n  desc \"Terminal UI for AWS SSM Session Manager\"\nend\n")
 
 // pubTools are the real commands on publish.sh's hermetic PATH, besides the
-// fake gh. cat is for the fake.
+// fake gh. The fake gh itself needs cat.
 var pubTools = []string{"mktemp", "rm", "base64", "tr", "cmp", "sed", "grep", "cat"}
 
 // fakeGHScript stands in for gh. It appends its argv to $FAKE_GH_LOG, one
-// argument per line and an <end> line per call, then answers as gh does.
-// A GET prints what publish.sh's --jq filter would (sha, encoding, then
-// the base64 content) from $FAKE_GH_GET_OUT, or fails with a 404 or a 500
-// as $FAKE_GH_GET says. A PUT prints nothing (publish.sh passes --silent)
-// and succeeds unless $FAKE_GH_PUT is "error".
+// argument per line and an <end> line per call. A GET prints what publish.sh's
+// --jq filter would (sha, encoding, then the base64 content) from
+// $FAKE_GH_GET_OUT, or fails with a 404 or a 500 as $FAKE_GH_GET says. A PUT
+// prints nothing (publish.sh passes --silent) and succeeds unless $FAKE_GH_PUT
+// is "error".
 const fakeGHScript = `#!/bin/sh
 for arg in "$@"; do
 	printf '%s\n' "$arg"
@@ -91,8 +91,8 @@ PUT)
 esac
 `
 
-// ghFake is one publish.sh run's world: a fake gh, the real tools, the local
-// file, and the env publish.sh runs with.
+// ghFake is the setup for one publish.sh run: a fake gh, the real tools, the
+// local file, and the env publish.sh runs with.
 type ghFake struct {
 	root  string
 	log   string // the fake gh's argv log
@@ -229,7 +229,7 @@ func ghFields(t *testing.T, call []string) map[string]string {
 	return fields
 }
 
-// assertGET checks call is a plain GET of the published file.
+// assertGET checks that call is a plain GET of the published file.
 func assertGET(t *testing.T, call []string) {
 	t.Helper()
 	if len(call) == 0 || call[0] != "api" {
@@ -252,8 +252,8 @@ func assertGET(t *testing.T, call []string) {
 	}
 }
 
-// assertPUT checks call writes the local file with the commit message and
-// returns its fields.
+// assertPUT checks that call writes the local file with the commit message,
+// and returns its fields.
 func assertPUT(t *testing.T, call []string) map[string]string {
 	t.Helper()
 	if len(call) == 0 || call[0] != "api" {

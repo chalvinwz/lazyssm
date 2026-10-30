@@ -24,8 +24,8 @@ const usage = `usage:
   render scoop    -tag vX.Y.Z -checksums <file> -template <file>
 `
 
-// run executes the CLI and returns the process exit code. Nothing is written
-// to stdout unless rendering fully succeeded.
+// run executes the CLI and returns its exit code. It writes to stdout only
+// when rendering fully succeeds.
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		report(stderr, "render: missing subcommand\n"+usage)
@@ -47,8 +47,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// report writes a diagnostic to w. There is nowhere left to report a failure
-// to write to stderr, so its error is deliberately dropped.
+// report writes a diagnostic to w. Its write error is dropped because there
+// is nowhere left to report it.
 func report(w io.Writer, format string, a ...any) {
 	_, _ = fmt.Fprintf(w, format, a...)
 }
@@ -59,7 +59,7 @@ func dispatch(cmd string, args []string, stderr io.Writer) (string, error) {
 	tag := fs.String("tag", "", "release tag, vX.Y.Z (required)")
 	tmplPath := fs.String("template", "", "path to the template file (required)")
 
-	// Only the flags of the chosen subcommand are registered.
+	// Register only the chosen subcommand's flags so the other's are rejected.
 	var sha256, checksumsPath *string
 	if cmd == "homebrew" {
 		sha256 = fs.String("sha256", "", "sha256 of the tag's source tarball (required)")

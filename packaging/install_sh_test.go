@@ -19,7 +19,7 @@ const (
 	shTag     = "v9.9.9"
 	shVersion = "9.9.9"
 
-	// The install pages `lazyssm doctor` links; install.sh links the same.
+	// install.sh links the same install pages as `lazyssm doctor`.
 	awsCLIDocURL = "https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html"
 	pluginDocURL = "https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html"
 )
@@ -108,7 +108,7 @@ func newSandbox(t *testing.T, base string) *sandbox {
 	return s
 }
 
-// newRelease is a sandbox serving a full fake release of shTag.
+// newRelease returns a sandbox serving a full fake release of shTag.
 func newRelease(t *testing.T) *sandbox {
 	t.Helper()
 	return newSandbox(t, fakeRelease(t, shTag, releaseAssets(t, shVersion)))
@@ -150,7 +150,7 @@ func (s *sandbox) install(t *testing.T, run shRun, version string) (stdout, stde
 	return stdout, stderr, code
 }
 
-// docFiles are the files a release archive carries next to the binary.
+// docFiles returns the files a release archive carries next to the binary.
 func docFiles() map[string]fileSpec {
 	return map[string]fileSpec{
 		"README.md":    {Body: []byte("# lazyssm\n"), Mode: 0o644},
@@ -163,8 +163,8 @@ func tarName(version, goos, goarch string) string {
 	return fmt.Sprintf("lazyssm_%s_%s_%s.tar.gz", version, goos, goarch)
 }
 
-// shArchive is a macOS/Linux release asset: the fake binary at the archive
-// root next to the docs.
+// shArchive returns a macOS/Linux release asset: the fake binary at the
+// archive root next to the docs.
 func shArchive(t *testing.T, version string) []byte {
 	t.Helper()
 	files := docFiles()
@@ -172,8 +172,8 @@ func shArchive(t *testing.T, version string) []byte {
 	return tarGz(t, files)
 }
 
-// releaseAssets is a whole release: a tar.gz per macOS/Linux platform and a
-// zip per Windows one, keyed by asset name.
+// releaseAssets returns a whole release, keyed by asset name: a tar.gz per
+// macOS/Linux platform and a zip per Windows one.
 func releaseAssets(t *testing.T, version string) map[string][]byte {
 	t.Helper()
 	archive := shArchive(t, version)
@@ -220,7 +220,7 @@ func mkdir(t *testing.T, elem ...string) string {
 	return p
 }
 
-// entries lists the names in dir.
+// entries returns the names in dir.
 func entries(t *testing.T, dir string) []string {
 	t.Helper()
 	des, err := os.ReadDir(dir)
@@ -291,7 +291,7 @@ func makeReadOnly(t *testing.T, dir string) {
 	if err := os.Chmod(dir, 0o555); err != nil {
 		t.Fatalf("chmod %s: %v", dir, err)
 	}
-	// Runs before t.TempDir's cleanup, which needs to delete what is inside.
+	// This runs before t.TempDir's cleanup, which must delete what is inside.
 	t.Cleanup(func() {
 		if err := os.Chmod(dir, 0o755); err != nil {
 			t.Errorf("chmod %s: %v", dir, err)
@@ -545,8 +545,8 @@ func TestInstallSHUsesSudoOnlyWhenNeeded(t *testing.T) {
 				}
 			}
 		})
-		// The default on a fresh Apple Silicon Mac: /usr/local/bin does not
-		// exist yet and /usr/local is root's.
+		// This is the default on a fresh Apple Silicon Mac: /usr/local/bin
+		// does not exist yet and root owns /usr/local.
 		t.Run("missing_dir_read_only_parent", func(t *testing.T) {
 			skipIfRoot(t)
 			s := newRelease(t)
@@ -575,7 +575,7 @@ func TestInstallSHNoSudoHint(t *testing.T) {
 		skipIfRoot(t)
 		s := newRelease(t)
 		makeReadOnly(t, s.dir)
-		// No fake sudo in s.fakes, and shTools never links the real one.
+		// s.fakes has no fake sudo, and shTools never links the real one.
 		stdout, stderr, code := s.install(t, sh.run, shTag)
 		wantFailure(t, code, stdout, stderr)
 		if !strings.Contains(stderr, "LAZYSSM_INSTALL_DIR") {
@@ -611,7 +611,7 @@ func TestInstallSHFallsBackToShasum(t *testing.T) {
 	eachShell(t, func(t *testing.T, sh shell) {
 		s := newRelease(t)
 		s.useTools(t, without(shTools, "sha256sum", "shasum")...)
-		// A logging stand-in for the real shasum.
+		// Wrap the real shasum to log its arguments.
 		log := filepath.Join(s.root, "shasum.log")
 		writeFake(t, s.fakes, "shasum", fmt.Sprintf("printf '%%s\\n' \"$*\" >> %s\nexec %s \"$@\"\n",
 			shQuote(log), shQuote(shasum)))
@@ -627,8 +627,8 @@ func TestInstallSHFallsBackToShasum(t *testing.T) {
 	})
 }
 
-// TestInstallSHRejectsTildeDir: in LAZYSSM_INSTALL_DIR="~/bin" the quotes
-// stop the shell expanding ~, so the dir would be ./~/bin.
+// TestInstallSHRejectsTildeDir guards against LAZYSSM_INSTALL_DIR="~/bin",
+// where the quotes stop the shell expanding ~, so the dir would be ./~/bin.
 func TestInstallSHRejectsTildeDir(t *testing.T) {
 	script, err := filepath.Abs(installSH)
 	if err != nil {

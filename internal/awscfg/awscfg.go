@@ -19,13 +19,12 @@ type Clients struct {
 	STS *sts.Client
 }
 
-// Region returns the resolved AWS region (may be empty if unset).
+// Region returns the resolved AWS region, or "" if none is configured.
 func (c Clients) Region() string { return c.Cfg.Region }
 
-// Load resolves AWS configuration with precedence: explicit profile/region
-// arguments (from --profile/--region flags) over AWS_PROFILE/AWS_REGION env over
-// shared config. SSO is handled via the standard SSO token cache. Empty profile
-// or region falls back to the default resolution chain.
+// Load resolves AWS configuration and builds the clients. A non-empty profile
+// or region overrides AWS_PROFILE, AWS_REGION and the shared config; an empty
+// one falls back to the default chain. SSO uses the standard SSO token cache.
 func Load(ctx context.Context, profile, region string) (Clients, error) {
 	var opts []func(*config.LoadOptions) error
 	if profile != "" {

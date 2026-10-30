@@ -71,8 +71,8 @@ func runPS1(t *testing.T, shell string, env map[string]string, command string) (
 	return stdout + stderr, code
 }
 
-// runInstallPS1 runs `<shell> -NoProfile -Command "Get-Content ../install.ps1
-// -Raw | Invoke-Expression"`, which is what `irm <url> | iex` does.
+// runInstallPS1 runs install.ps1 under shell through iexCommand, as
+// `irm <url> | iex` does.
 func runInstallPS1(t *testing.T, shell string, env map[string]string) (out string, code int) {
 	t.Helper()
 	return runPS1(t, shell, env, iexCommand)
@@ -150,8 +150,8 @@ func fakeBinaryEXE(t *testing.T, version string) []byte {
 	out := filepath.Join(src, "lazyssm.exe")
 	cmd := exec.CommandContext(t.Context(), goTool, "build", "-trimpath", "-o", out, ".")
 	cmd.Dir = src
-	// Offline and self-contained: no toolchain download, no workspace, no
-	// GOFLAGS such as -mod=vendor from the caller.
+	// Build offline and self-contained: no toolchain download, no workspace,
+	// and no caller GOFLAGS such as -mod=vendor.
 	cmd.Env = append(os.Environ(), "GOOS=windows", "GOARCH="+runtime.GOARCH, "CGO_ENABLED=0",
 		"GOFLAGS=", "GOTOOLCHAIN=local", "GOWORK=off")
 	if msg, err := cmd.CombinedOutput(); err != nil {
@@ -169,8 +169,8 @@ func zipName(version, goarch string) string {
 	return fmt.Sprintf("lazyssm_%s_windows_%s.zip", version, goarch)
 }
 
-// psArchive is a Windows release asset: the fake lazyssm.exe at the archive
-// root next to the docs.
+// psArchive returns a Windows release asset: the fake lazyssm.exe at the
+// archive root next to the docs.
 func psArchive(t *testing.T, version string) []byte {
 	t.Helper()
 	files := docFiles()
@@ -236,7 +236,7 @@ func (b *psBox) install(t *testing.T, version string) (out string, code int) {
 	return out, code
 }
 
-// run runs command, which runs install.ps1 somehow, with the box's
+// run runs command, which must itself invoke install.ps1, with the box's
 // environment.
 func (b *psBox) run(t *testing.T, version, command string) (out string, code int) {
 	t.Helper()
@@ -278,8 +278,9 @@ func psQuery(script string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// The registry snippets move values as base64 UTF-8, so console code pages
-// never touch a Path with non-ASCII characters in it.
+// readRawUserPath prints the user Path's registry type and raw value, or
+// "absent". The registry snippets move values as base64 UTF-8, so console code
+// pages never touch a Path with non-ASCII characters in it.
 const readRawUserPath = `$k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment'); ` +
 	`if ($null -eq $k -or @($k.GetValueNames()) -notcontains 'Path') { 'absent' } ` +
 	`else { $k.GetValueKind('Path').ToString() + ' ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(` +
@@ -314,7 +315,7 @@ func rawUserPath(t *testing.T) (kind, raw string) {
 }
 
 // keepUserPath saves the raw user Path, unexpanded and with its registry
-// type, and restores exactly that when the test ends. It returns the raw value.
+// type, restores exactly that when the test ends, and returns the raw value.
 func keepUserPath(t *testing.T) (raw string) {
 	t.Helper()
 	kind, raw := rawUserPath(t)
@@ -341,8 +342,8 @@ func setUserPath(t *testing.T, raw string) {
 	}
 }
 
-// userPathEntries is the user Path as
-// [Environment]::GetEnvironmentVariable('Path','User') returns it, split.
+// userPathEntries returns the entries of the user Path as
+// [Environment]::GetEnvironmentVariable('Path','User') returns it.
 func userPathEntries(t *testing.T) []string {
 	t.Helper()
 	got, err := psQuery(`[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(` +
@@ -503,8 +504,8 @@ func TestInstallPS1UpgradeKeepsSinglePathEntry(t *testing.T) {
 func TestInstallPS1KeepsExistingPathEntry(t *testing.T) {
 	eachPowerShell(t, func(t *testing.T, shell string) {
 		b := newPSBox(t, shell, psRelease(t, psVersion))
-		// The dir is already there, in other case and with a trailing
-		// backslash: Windows treats that as the same entry.
+		// Seed the user Path with the dir in another case and a trailing
+		// backslash, which Windows treats as the same entry.
 		variant := strings.ToUpper(b.dir) + `\`
 		seeded := variant
 		if b.path != "" {
@@ -554,11 +555,10 @@ func TestInstallPS1KeepsUserPathRaw(t *testing.T) {
 	})
 }
 
-// TestInstallPS1DoesNotCloseCallerShell runs a failing install the way a
-// caller's session would, then keeps going. A failed install must raise an
-// error the caller can catch, which prints `caught: <message>`; `exit`, or a
-// bare `break`, would end the caller's whole session under iex, so `after`
-// would never print.
+// TestInstallPS1DoesNotCloseCallerShell runs a failing install inside a
+// caller's try/catch, then keeps going. The failure must be an error the
+// caller can catch, printed as `caught: <message>`; `exit` or a bare `break`
+// would end the caller's whole session under iex, so `after` would not print.
 func TestInstallPS1DoesNotCloseCallerShell(t *testing.T) {
 	command := "try { " + iexCommand + " } catch { Write-Output ('caught: ' + $_.Exception.Message) }; Write-Output after"
 	eachPowerShell(t, func(t *testing.T, shell string) {
@@ -639,8 +639,8 @@ func TestInstallPS1MapsArch(t *testing.T) {
 }
 
 func TestInstallPS1WarnsMissingAWSTools(t *testing.T) {
-	// A PATH with only Windows itself on it, so the runner's own aws and
-	// session-manager-plugin are out of sight.
+	// minimalPath returns a PATH of Windows dirs only, hiding the runner's own
+	// aws and session-manager-plugin.
 	minimalPath := func() string {
 		root := os.Getenv("SystemRoot")
 		return strings.Join([]string{

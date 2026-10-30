@@ -20,9 +20,8 @@ func TestRegionAccessorEmpty(t *testing.T) {
 	}
 }
 
-// TestLoadAppliesRegion verifies the explicit --region argument wins end to end.
-// LoadDefaultConfig is lazy (credentials resolve on first API call, not here),
-// so this is safe in CI with no AWS credentials configured.
+// TestLoadAppliesRegion checks that an explicit region argument wins. It runs
+// without AWS credentials because they resolve lazily, on the first API call.
 func TestLoadAppliesRegion(t *testing.T) {
 	c, err := Load(context.Background(), "", "us-west-2")
 	if err != nil {
