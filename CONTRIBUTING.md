@@ -44,14 +44,15 @@ Squash-merge only, keeping `main` history linear. As the sole maintainer you sel
 ## Releasing
 
 Releases are cut by [release-please](https://github.com/googleapis/release-please).
-Every merge to `main` updates one open release PR, `chore: release vX.Y.Z`,
-which holds:
+Every merge to `main` rebuilds one open release PR, `chore: release vX.Y.Z`,
+from the latest `main` (`always-update` in `release-please-config.json`), so it
+never lags behind. It holds:
 
 - the next version, worked out from the merged PR titles: `feat:` bumps the
   minor version and `fix:` the patch (before 1.0, a breaking change bumps the
   minor version too)
 - that version's `CHANGELOG.md` section, one line per PR title
-- `docs/demo.gif`, re-recorded from `demo/lazyssm.tape`
+- `docs/demo.gif`, re-recorded from `demo/lazyssm.tape` after every merge
 
 Merging the release PR tags `vX.Y.Z` and publishes the GitHub release. The tag
 runs the `release` workflow, which builds all-OS binaries (linux, darwin,
