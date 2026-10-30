@@ -43,18 +43,40 @@ Squash-merge only, keeping `main` history linear. As the sole maintainer you sel
 
 ## Releasing
 
-The version is tag-driven (`git describe` / GoReleaser) — nothing to bump in code. Cut a release by pushing a **strict semver** tag:
+Releases are cut by [release-please](https://github.com/googleapis/release-please).
+Every merge to `main` updates one open release PR, `chore: release vX.Y.Z`,
+which holds:
 
-```sh
-git tag v0.1.0
-git push origin v0.1.0
-```
+- the next version, worked out from the merged PR titles: `feat:` bumps the
+  minor version and `fix:` the patch (before 1.0, a breaking change bumps the
+  minor version too)
+- that version's `CHANGELOG.md` section, one line per PR title
+- `docs/demo.gif`, re-recorded from `demo/lazyssm.tape`
 
-The `release` workflow then builds all-OS binaries (linux, darwin, windows × amd64, arm64), generates `checksums.txt`, and publishes a GitHub Release with an auto-generated changelog. Only tags matching `vX.Y.Z` trigger a release.
+Merging the release PR tags `vX.Y.Z` and publishes the GitHub release. The tag
+runs the `release` workflow, which builds all-OS binaries (linux, darwin,
+windows × amd64, arm64) with GoReleaser, uploads them with `checksums.txt`, and
+publishes the Homebrew formula and Scoop manifest. Nothing in the code is
+bumped; the version comes from the tag.
+
+PR titles become the changelog, so write them for users: `feat:` for something
+new they can do, `fix:` for a bug they hit, `build(deps):` for dependency
+updates. `chore:`, `ci:`, `docs:`, `refactor:`, `style:` and `test:` are left
+out of the changelog.
+
+### Release token
+
+release-please uses the `RELEASE_PLEASE_TOKEN` secret: a fine-grained personal
+access token for this repository with **Contents**, **Pull requests** and
+**Issues** set to read and write (release-please labels its PRs). It can't use
+the built-in `GITHUB_TOKEN`, because GitHub runs no workflows for PRs and tags
+that token creates: the release PR would get no CI and the tag wouldn't start
+the `release` workflow. Renew the token before it expires; an expired token
+stops the release PR from updating.
 
 ### Who can release
 
-Only maintainers with write access to this repository can push `vX.Y.Z` tags, and pushing such a tag is what triggers a release. Contributors working from a fork **cannot** trigger releases — propose your change as a PR, and a maintainer cuts the release once it lands on `main`.
+Only maintainers with write access to this repository can merge the release PR, and merging it is what triggers a release. Contributors working from a fork **cannot** trigger releases — propose your change as a PR, and a maintainer cuts the release once it lands on `main`.
 
 ## Good first issues
 

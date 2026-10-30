@@ -1,20 +1,16 @@
 #!/bin/sh
 # publish.sh: create or update one file in a GitHub repo through the Contents
-# API. The release workflow publishes the Homebrew formula and the Scoop
-# manifest with it:
+# API. release.yml uses it to publish the Homebrew formula and Scoop manifest:
 #
 #   GH_TOKEN=<token> packaging/publish.sh <owner/repo> <path> <local-file> <commit-message>
 #
-# The file in the repo is read first. If its content already equals the local
-# file, nothing is written and "unchanged" is printed, so re-running a release
-# job makes no new commit. Otherwise one PUT creates the file (the read got a
-# 404) or updates it (passing the current blob sha). Any other API error, or a
-# failed write, exits non-zero.
+# A file that already matches is not rewritten, so re-running a release job
+# makes no new commit. Otherwise one PUT creates the file (after a 404) or
+# updates it by blob sha. Any other API error or failed write exits non-zero.
 #
-# Needs gh, which authenticates with GH_TOKEN, plus mktemp, sed, grep, cmp, tr
-# and base64. The base64 calls (plain encode, -d to decode) work with GNU
-# coreutils, as on the ubuntu-latest release runner, and with macOS's base64,
-# where the tests also run.
+# Needs gh (authenticated by GH_TOKEN), mktemp, sed, grep, cmp, tr and base64.
+# Only plain base64 encode and -d are used, which both GNU coreutils (the
+# release runner) and macOS (where the tests also run) support.
 
 set -eu
 
@@ -52,10 +48,9 @@ trap 'exit 1' HUP INT TERM
 
 endpoint="repos/$repo/contents/$path"
 
-# Read the current file as three parts: its blob sha, its encoding, then its
-# content, which the API sends as base64 wrapped at 60 columns. gh reports
-# any HTTP error on stderr as "gh: <message> (HTTP <code>)" and exits
-# non-zero; a 404 means there is no file there yet (or the repo is empty).
+# Read the blob sha, encoding and content (base64 wrapped at 60 columns).
+# On an HTTP error gh exits non-zero and prints "(HTTP <code>)" on stderr; a
+# 404 means there is no file yet, or the repo is empty.
 sha=""
 if gh api "$endpoint" --jq '.sha, .encoding, .content' >"$tmp/current" 2>"$tmp/err"; then
 	sha=$(sed -n 1p "$tmp/current")

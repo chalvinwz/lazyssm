@@ -2,15 +2,22 @@ version: "2"
 linters:
   enable:
     - errcheck
+    - errorlint
+    - exhaustive
+    - gocritic
     - govet
     - ineffassign
     - staticcheck
     - unused
     - misspell
     - revive
+  settings:
+    exhaustive:
+      # A default branch is a deliberate catch-all. Switches without one must
+      # list every case, so a new mode or source cannot be missed.
+      default-signifies-exhaustive: true
   exclusions:
     rules:
-      # session.SessionEndedMsg is an established public type; renaming to
-      # drop the stutter would be a breaking API change, out of scope here.
+      # session.SessionEndedMsg stutters; renaming it is out of scope here.
       - linters: [revive]
         text: stutters

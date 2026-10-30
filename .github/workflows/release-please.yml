@@ -1,0 +1,65 @@
+name: release-please
+
+# Each merge to main updates the release PR with the next version and its
+# CHANGELOG.md section. Merging that PR tags vX.Y.Z and publishes the GitHub
+# release; the tag then starts release.yml, which uploads the binaries.
+on:
+  push:
+    branches: [main]
+
+# Queue runs instead of cancelling them; each one updates the same release PR.
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+# Writes use RELEASE_PLEASE_TOKEN: PRs and tags created with GITHUB_TOKEN
+# do not trigger CI or release.yml.
+permissions:
+  contents: read
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      pr: ${{ steps.release.outputs.pr }}
+    steps:
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
+        id: release
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  # Re-record docs/demo.gif on the release PR so the README GIF matches the
+  # version it ships with.
+  demo-gif:
+    needs: release-please
+    if: needs.release-please.outputs.pr != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ fromJSON(needs.release-please.outputs.pr).headBranchName }}
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: "go.mod"
+      - name: Install lazyssm for the tape
+        run: |
+          go install ./cmd/lazyssm
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - uses: charmbracelet/vhs-action@f6d7db07a432fcd3b06772628d36a57f96d95dcf # v2.1.1
+        with:
+          version: v0.12.1
+          path: demo/lazyssm.tape
+      - name: Commit the GIF to the release PR
+        run: |
+          if git diff --quiet -- docs/demo.gif; then
+            echo "docs/demo.gif is unchanged"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/demo.gif
+          git commit -m "docs: re-record the demo GIF"
+          git push

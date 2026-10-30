@@ -1,11 +1,12 @@
 # Changelog
 
-All notable changes to this project are documented in this file.
+All notable changes to this project are documented in this file, and the
+project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [Unreleased]
+From 0.5.0 on, release-please writes each version's section from the titles of
+the pull requests merged since the last release; each line links to its PR for
+the details. Earlier versions follow
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.4.0] - 2026-10-30
 
@@ -137,7 +138,6 @@ Initial public release.
 - `--profile` / `--region` global flags and `--version` output.
 - GoReleaser cross-build for linux, darwin, and windows on amd64 and arm64.
 
-[Unreleased]: https://github.com/chalvinwz/lazyssm/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/chalvinwz/lazyssm/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/chalvinwz/lazyssm/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/chalvinwz/lazyssm/compare/v0.1.0...v0.2.0

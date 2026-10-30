@@ -3,10 +3,10 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/chalvinwz/lazyssm/main/install.sh | sh
 #
-# The release archive is checked against the release's checksums.txt before
-# anything is installed. sudo is used only to create the install dir and copy
-# the binary, and only when that dir is not writable. Shell rc files are never
-# edited, and nothing is read from stdin, so piping the script into sh works.
+# The archive is verified against the release's checksums.txt before anything
+# is installed. sudo is used only for the mkdir and copy, and only when the
+# install dir is not writable. Shell rc files are never edited, and nothing is
+# read from stdin, so the script works when piped into sh.
 #
 # Environment:
 #   LAZYSSM_VERSION        release to install, e.g. v0.3.0 or 0.3.0 (default: latest)
@@ -33,8 +33,7 @@ warn() {
 	printf 'warning: %s\n' "$*" >&2
 }
 
-# die prints an error, then each further argument as an indented hint line,
-# and exits non-zero.
+# die prints error $1 and each further argument as a hint line, then exits 1.
 die() {
 	printf 'error: %s\n' "$1" >&2
 	shift
@@ -63,7 +62,7 @@ check_tools() {
 	fi
 }
 
-# detect_platform sets os and arch to the release asset's naming.
+# detect_platform sets os and arch as the release asset names spell them.
 detect_platform() {
 	sys=$(uname -s)
 	machine=$(uname -m)
@@ -142,8 +141,8 @@ resolve_version() {
 resolve_dir() {
 	dir=${LAZYSSM_INSTALL_DIR:-/usr/local/bin}
 	case $dir in
-	# Quoted, as in LAZYSSM_INSTALL_DIR="~/bin", ~ is not expanded, and the
-	# dir would be ./~/bin.
+	# A quoted ~, as in LAZYSSM_INSTALL_DIR="~/bin", is not expanded and would
+	# install into ./~/bin.
 	\~*)
 		die "LAZYSSM_INSTALL_DIR '$dir' starts with a literal ~; use \$HOME instead" \
 			"for example: LAZYSSM_INSTALL_DIR=\"\$HOME/.local/bin\""
@@ -227,7 +226,7 @@ require_sudo() {
 	fi
 }
 
-# install_binary puts lazyssm into dir, using sudo for just the mkdir and copy
+# install_binary puts lazyssm into dir, using sudo only for the mkdir and copy
 # when dir (or the parent it would be created in) is not writable.
 install_binary() {
 	target="$dir/lazyssm"

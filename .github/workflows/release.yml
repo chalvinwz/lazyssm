@@ -4,24 +4,22 @@ on:
   push:
     tags: ["v[0-9]+.[0-9]+.[0-9]+"]
 
-# One release run at a time, in push order: two tags pushed minutes apart
-# must not interleave, or the older run could publish its formula and
-# manifest over the newer ones while both runs stay green. GitHub keeps only
-# one pending run per group, so with 3+ tags queued it cancels the middle
-# pending runs; re-run a cancelled release by hand.
+# Run releases one at a time, in push order, so an older tag cannot silently
+# publish its formula and manifest over a newer one. GitHub keeps one pending
+# run per group, so with three or more tags queued the middle ones are
+# cancelled; re-run those by hand.
 concurrency:
   group: release
   cancel-in-progress: false
 
-# Read-only unless a job asks for more; only goreleaser writes (the release).
+# GITHUB_TOKEN is read-only except in goreleaser, which uploads the release.
 permissions:
   contents: read
 
 defaults:
   run:
-    # An explicit bash runs with -eo pipefail, so a failed curl in a pipeline
-    # fails the step instead of passing empty input on. verify-windows
-    # overrides this with pwsh.
+    # Explicit bash adds -o pipefail, so a failed curl in a pipeline fails the
+    # step. verify-windows overrides this with pwsh.
     shell: bash
 
 jobs:
@@ -43,10 +41,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # homebrew and scoop publish to the tap and bucket repos with
-  # PACKAGES_GITHUB_TOKEN. Only their publish steps see it, and only gh (via
-  # packaging/publish.sh) uses it. Publishing is idempotent: when the file is
-  # already current nothing is committed, so either job can be re-run alone.
+  # homebrew and scoop push to the tap and bucket repos with
+  # PACKAGES_GITHUB_TOKEN, set only on the publish steps and used only by gh.
+  # Publishing skips an unchanged file, so either job can be re-run alone.
   homebrew:
     needs: goreleaser
     runs-on: ubuntu-latest
@@ -106,7 +103,7 @@ jobs:
           packaging/publish.sh chalvinwz/scoop-bucket bucket/lazyssm.json \
             "$RUNNER_TEMP/lazyssm.json" "lazyssm ${TAG#v}"
 
-  # The verify jobs install the release the way users do and check that
+  # The verify jobs install the release as users do and check that
   # `lazyssm --version` prints exactly "lazyssm X.Y.Z" for this tag.
   verify-brew:
     needs: homebrew
@@ -166,8 +163,8 @@ jobs:
         shell: pwsh
     env:
       TAG: ${{ github.ref_name }}
-      # ScoopInstaller/Install's install.ps1 at a fixed commit, and the sha256
-      # of that file. The step checks the hash before running the script.
+      # Pin Scoop's installer to a commit and its sha256; the Install Scoop
+      # step checks the hash before running it.
       SCOOP_INSTALLER_URL: https://raw.githubusercontent.com/ScoopInstaller/Install/1e2f334083d609986d8c8bc9e31ae8e87c39fab4/install.ps1
       SCOOP_INSTALLER_SHA256: 94f983b190438311e006b957db7c8422709e0ba62a6c2ac04e278164108f2512
     steps:
@@ -193,10 +190,9 @@ jobs:
           if ($hash -ne $env:SCOOP_INSTALLER_SHA256) {
             throw "Scoop installer sha256 is $hash, want $env:SCOOP_INSTALLER_SHA256; not running it"
           }
-          # The runner's user is an administrator. The pinned installer lets
-          # that pass when $env:CI is set, as it is on GitHub runners;
-          # -RunAsAdmin is passed anyway, to make the intent plain and not
-          # rely on that exemption.
+          # The runner user is an administrator. The installer allows that
+          # when $env:CI is set, but -RunAsAdmin states the intent instead of
+          # relying on that exemption.
           & $installer -RunAsAdmin
           if ($LASTEXITCODE) { throw "Scoop installer exited $LASTEXITCODE" }
           $shims = Join-Path $env:USERPROFILE 'scoop\shims'

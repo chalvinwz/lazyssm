@@ -4,7 +4,7 @@ BINDIR  := bin
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-# Cross-compile targets for `make release`.
+# `make release` cross-compiles for these platforms.
 PLATFORMS := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64
 
 .DEFAULT_GOAL := build

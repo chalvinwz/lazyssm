@@ -1,11 +1,11 @@
-# lazyssm demo tape — renders docs/demo.gif
-#
-# Prereqs: install VHS (https://github.com/charmbracelet/vhs) and lazyssm:
+# Renders docs/demo.gif. Needs VHS (https://github.com/charmbracelet/vhs) and
+# lazyssm on PATH:
 #   go install github.com/charmbracelet/vhs@latest
-#   make install            # puts lazyssm on PATH
-# Record (no AWS account needed — uses built-in demo data):
+#   make install            # installs into GOBIN, which must be on PATH
+# Record with demo data, so no AWS account is needed:
 #   vhs demo/lazyssm.tape
-# Re-record only when the UI changes; commit docs/demo.gif alongside.
+# CI re-records the GIF on every release PR (release-please.yml); run this
+# locally to preview a UI change.
 
 Output docs/demo.gif
 
@@ -17,7 +17,7 @@ Set Padding 18
 Set Theme "Catppuccin Mocha"
 Set TypingSpeed 90ms
 
-# Demo mode: fixed sample inventory, never calls AWS.
+# Demo mode serves a fixed sample inventory and never calls AWS.
 Env LAZYSSM_DEMO "1"
 
 Hide
@@ -31,11 +31,11 @@ Sleep 2s
 Down@500ms 3
 Sleep 1.2s
 
-# Pin the highlighted instance — it floats to the top.
+# Pin the highlighted instance; pinned rows sort to the top.
 Type "p"
 Sleep 1.8s
 
-# Fuzzy search (client-side, instant).
+# Fuzzy search, client-side.
 Type "/"
 Sleep 700ms
 Type "api"
@@ -51,13 +51,13 @@ Sleep 1.2s
 Enter
 Sleep 2s
 
-# Toggle source: SSM-only <-> all EC2.
+# Toggle the source between SSM-only and all EC2.
 Type "t"
 Sleep 2s
 Type "t"
 Sleep 1.5s
 
-# Keybinding help overlay.
+# Open and close the keybinding help.
 Type "?"
 Sleep 2.2s
 Type "?"

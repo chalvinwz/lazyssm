@@ -402,6 +402,8 @@ func (m Model) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) routeInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch m.mode {
+	case modeList, modeHelp:
+		// no text input has focus
 	case modeFilter:
 		m.filterInput, cmd = m.filterInput.Update(msg)
 	case modeSearch:

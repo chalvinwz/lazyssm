@@ -1,7 +1,7 @@
 name: installers
 
-# Path-filtered, and deliberately not a required check on main, so it never
-# blocks unrelated PRs.
+# Path-filtered, so keep it out of the required checks on main; otherwise it
+# would block PRs that do not touch these paths.
 on:
   pull_request:
     paths:
@@ -25,8 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SHELLCHECK_VERSION: v0.11.0
-      # sha256 of shellcheck-v0.11.0.linux.x86_64.tar.gz from the
-      # koalaman/shellcheck release.
+      # sha256 of the koalaman/shellcheck v0.11.0 linux.x86_64 tarball.
       SHELLCHECK_SHA256: b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -41,7 +40,7 @@ jobs:
           tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP"
           "$RUNNER_TEMP/shellcheck-$SHELLCHECK_VERSION/shellcheck" --version
       - name: Run shellcheck
-        # By full path: the runner image has an older shellcheck on PATH.
+        # Run by full path: the runner image has an older shellcheck on PATH.
         run: |
           "$RUNNER_TEMP/shellcheck-$SHELLCHECK_VERSION/shellcheck" --shell=sh install.sh packaging/publish.sh
 
@@ -61,11 +60,10 @@ jobs:
       - name: Test
         run: go test ./packaging/... -v
 
-  # Installs real releases from GitHub with the checked-out scripts: a pinned
-  # v0.2.0, then the latest release (no LAZYSSM_VERSION) into a fresh dir, so
-  # the latest-release lookup runs against real GitHub and the v0.2.0 binary
-  # cannot satisfy the second check. On Ubuntu, v0.2.0 also goes into the
-  # default /usr/local/bin, through the runner's real passwordless sudo.
+  # Install real releases with the checked-out scripts, so the latest-release
+  # lookup runs against GitHub. The latest goes into a fresh dir so the v0.2.0
+  # binary cannot pass its check. On Ubuntu, installing into /usr/local/bin
+  # exercises the runner's real sudo.
   smoke:
     strategy:
       fail-fast: false
@@ -108,10 +106,9 @@ jobs:
         env:
           LAZYSSM_VERSION: v0.2.0
         run: |
-          # The runner image leaves the root-owned /usr/local/bin mode 777
-          # (actions/runner-images#3727); put it back to a stock 0755 so
-          # install.sh has to use sudo, as on a real machine. The runner is
-          # thrown away after the job.
+          # The runner image leaves /usr/local/bin mode 777
+          # (actions/runner-images#3727). Restore 0755 so install.sh must use
+          # sudo, as on a real machine; the runner is discarded afterwards.
           sudo chmod 0755 /usr/local/bin
           if [ -w /usr/local/bin ]; then
             echo "::error::/usr/local/bin is writable here, so this step would not exercise sudo"
@@ -143,10 +140,9 @@ jobs:
             throw "$exe --version printed '$($got -join '; ')' (exit $LASTEXITCODE), want 'lazyssm 0.2.0'"
           }
           Write-Host $got[0]
-      # The two latest-release installs also check that install.ps1 found the
-      # tag through the releases/latest redirect, without warning that it
-      # fell back to the GitHub API: PowerShell 7 here, then Windows
-      # PowerShell 5.1, whose HttpWebResponse takes the other code branch.
+      # The latest-release installs also fail if install.ps1 fell back to the
+      # GitHub API. They run under PowerShell 7 and 5.1, which read the
+      # redirect through different code branches.
       - name: Install the latest release with install.ps1
         if: runner.os == 'Windows'
         shell: pwsh

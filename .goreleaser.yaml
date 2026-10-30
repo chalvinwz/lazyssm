@@ -15,5 +15,7 @@ archives:
         formats: [zip]
 checksum:
   name_template: checksums.txt
+# release-please writes the release notes. GoReleaser only uploads assets,
+# and its default release.mode keeps the existing notes.
 changelog:
-  use: github
+  disable: true
