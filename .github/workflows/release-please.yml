@@ -31,7 +31,8 @@ jobs:
           manifest-file: .release-please-manifest.json
 
   # Re-record docs/demo.gif on the release PR so the README GIF matches the
-  # version it ships with.
+  # version it ships with. always-update makes release-please rebuild the PR
+  # from main on every merge, so this runs after each one.
   demo-gif:
     needs: release-please
     if: needs.release-please.outputs.pr != ''
