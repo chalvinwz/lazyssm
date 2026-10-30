@@ -31,8 +31,8 @@ func readFile(t *testing.T, path string) string {
 	return string(b)
 }
 
-// checksumsV030 is a checksums.txt in GoReleaser's format for v0.3.0 with
-// darwin, linux and both windows assets.
+// checksumsV030 returns a checksums.txt in GoReleaser's format for v0.3.0
+// with darwin, linux and both windows assets.
 func checksumsV030() string {
 	return strings.Join([]string{
 		hexD + "  lazyssm_0.3.0_darwin_amd64.tar.gz",
@@ -109,7 +109,7 @@ func TestFormulaRendersTagAndSHA(t *testing.T) {
 
 	ruby, err := exec.LookPath("ruby")
 	if err != nil {
-		// Every CI runner has ruby, so there the check must not go quiet.
+		// Every CI runner has ruby, so in CI a missing ruby fails the test.
 		if os.Getenv("CI") != "" {
 			t.Fatal("ruby not on PATH; CI must run the ruby -c syntax check")
 		}
@@ -358,8 +358,8 @@ func TestScoopManifestFromRealV020Checksums(t *testing.T) {
 	}
 }
 
-// The release workflow invokes the CLI with exactly these flags; keep them
-// stable.
+// TestRunHomebrew passes the exact flags the release workflow uses, so those
+// flags must stay stable.
 func TestRunHomebrew(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"homebrew", "-tag", "v0.3.0", "-sha256", hexC, "-template", formulaTmplPath}, &stdout, &stderr)

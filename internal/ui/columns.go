@@ -14,6 +14,10 @@ type listColumn struct {
 	width int
 }
 
+// listRightPad keeps the last column off the panel's right border, as the
+// pin gutter does on the left.
+const listRightPad = 2
+
 func (m Model) listColumns(w int) []listColumn {
 	configured := []string{"name", "age", "ssm"}
 	if m.store != nil && len(m.store.Columns) > 0 {
@@ -59,9 +63,13 @@ func (m Model) listColumns(w int) []listColumn {
 			}
 		}
 	}
+	// The padding comes out of spare room only: it never costs a column or a
+	// character of a name.
+	slack := w - needed
+	pad := min(listRightPad, max(0, slack))
 	for i := range columns {
 		if columns[i].name == "name" {
-			columns[i].width = max(1, nameWidth+w-needed)
+			columns[i].width = max(1, nameWidth+slack-pad)
 		}
 	}
 	return columns
@@ -122,7 +130,8 @@ func (m Model) rowLine(i int, in inventory.Instance, w int, columns []listColumn
 	}
 	row := strings.Join(parts, " ")
 	if selected {
-		return styles.selStyle.Width(w).Render(row)
+		// Pad before styling so the highlight also covers the right padding.
+		return styles.selStyle.Width(w).Render(padRight(row, w))
 	}
 	return row
 }

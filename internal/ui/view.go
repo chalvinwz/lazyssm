@@ -56,7 +56,7 @@ func (m Model) render() string {
 	return background.Render(content)
 }
 
-// renderSplit draws the title bar, list+detail panels, and footer.
+// renderSplit draws the title bar, the list and detail panels, and the footer.
 func (m Model) renderSplit() string {
 	title := lipgloss.NewStyle().Width(m.width).Render(m.titleBar())
 	footer := lipgloss.NewStyle().Width(m.width).Render(m.footerBar())
@@ -94,9 +94,9 @@ func (m Model) titleBar() string {
 	if m.src == inventory.SourceAllEC2 {
 		src = "EC2"
 	}
-	profile := m.profile
-	if profile == "" {
-		profile = "default"
+	profile := profileLabel(m.profile)
+	if m.account != "" {
+		profile += " (" + m.account + ")"
 	}
 	meta := fmt.Sprintf(" %s · %s · %s", profile, m.clients.Region(), src)
 	if m.filter.Active() {
@@ -107,6 +107,9 @@ func (m Model) titleBar() string {
 }
 
 func (m Model) listContent(w, h int) string {
+	if m.mode == modePicker {
+		return m.pickerList(w, h)
+	}
 	count := len(m.visible)
 	header := m.styles().panelTitleStyle.Render(fmt.Sprintf("instances (%d)", count))
 	var headings []string
@@ -124,11 +127,11 @@ func (m Model) listContent(w, h int) string {
 		return header + "\n" + m.styles().dimStyle.Render("loading…")
 	}
 	if count == 0 {
-		msg := "no instances — f to filter, t to toggle source"
 		if m.err != nil {
-			msg = "error: " + m.err.Error()
+			lines := append([]string{header}, m.errorList(w)...)
+			return strings.Join(lines[:min(len(lines), h)], "\n")
 		}
-		return header + "\n" + m.styles().offlineStyle.Render(truncate(msg, w))
+		return header + "\n" + m.styles().offlineStyle.Render(truncate("no instances — f to filter, t to toggle source", w))
 	}
 
 	start := 0
@@ -168,6 +171,12 @@ func instanceAge(launch, now time.Time) string {
 }
 
 func (m Model) detailContent(w, h int) string {
+	if m.mode == modePicker {
+		return m.pickerDetail(w, h)
+	}
+	if m.errorShown() {
+		return m.errorDetail(w, h)
+	}
 	title := m.styles().panelTitleStyle.Render("detail")
 	if m.cursor >= len(m.visible) {
 		return title + "\n" + m.styles().dimStyle.Render("—")
@@ -235,41 +244,54 @@ func (m Model) footerBar() string {
 	case modeSearch:
 		hint := m.styles().dimStyle.Render(" (↑↓ move · ⏎ connect · esc clear)  ")
 		return m.styles().keyStyle.Render("search") + hint + m.searchInput.View()
+	case modePicker:
+		return m.pickerFooter()
 	default:
 		status := m.status
 		if status == "" {
 			status = fmt.Sprintf("%d shown", len(m.visible))
 		}
-		statusR := m.styles().dimStyle.Render(status)
-		if m.err != nil {
-			// Surface fetch failures distinctly; the list still shows the
-			// last successful result rather than blanking.
-			if len(m.visible) > 0 {
-				status += " (showing last-known)"
-			}
-			statusR = m.styles().failStyle.Render(status)
+		// One line only: a long status would wrap and push the panels up.
+		width := m.width
+		if width <= 0 {
+			width = lipgloss.Width(status) + 64 // no size yet: nothing to fit
 		}
-		hints := []string{"↑↓ move", "f filter", "/ search", "t toggle", "p pin", "r refresh", "⏎ connect", "? help", "q quit"}
-		return statusR + "\n" + m.renderHints(hints)
+		statusR := m.styles().dimStyle.Render(truncate(status, width))
+		if m.err != nil || m.failed != nil {
+			// Show failures in the fail style. After a failed fetch the list
+			// still shows the last successful result rather than blanking.
+			suffix := ""
+			if m.err != nil && len(m.visible) > 0 {
+				suffix += " (showing last-known)"
+			}
+			switch {
+			case m.needsSignIn() || (m.failed != nil && m.failed.SignIn):
+				suffix += " · L sign in"
+			case !m.errorShown():
+				suffix += " · e details"
+			}
+			status = truncate(status, width-lipgloss.Width(suffix)) + suffix
+			statusR = m.styles().failStyle.Render(truncate(status, width))
+		}
+		return statusR + "\n" + m.footerHints()
 	}
-}
-
-func (m Model) renderHints(pairs []string) string {
-	parts := make([]string, len(pairs))
-	for i, p := range pairs {
-		fields := strings.SplitN(p, " ", 2)
-		parts[i] = m.styles().keyStyle.Render(fields[0]) + m.styles().faintStyle.Render(" "+fields[1])
-	}
-	return strings.Join(parts, m.styles().faintStyle.Render(" · "))
 }
 
 func (m Model) renderCompact() string {
-	// Minimal fallback for tiny terminals — no borders to avoid breakage.
+	// Tiny terminals get a minimal fallback without borders, which would break.
 	var b strings.Builder
 	b.WriteString(m.styles().titleStyle.Render("lazyssm"))
 	b.WriteString("\n")
+	if m.mode == modePicker {
+		b.WriteString(m.pickerList(m.width, m.height-2) + "\n" + m.pickerFooter())
+		return b.String()
+	}
 	if m.loading {
 		b.WriteString(m.styles().dimStyle.Render("loading…"))
+		return b.String()
+	}
+	if m.err != nil && len(m.visible) == 0 {
+		b.WriteString(m.styles().failStyle.Render(truncate("✗ "+m.errorHeadline(), m.width)))
 		return b.String()
 	}
 	columns := m.listColumns(m.width)
@@ -279,31 +301,6 @@ func (m Model) renderCompact() string {
 		}
 		b.WriteString(m.rowLine(i, in, m.width, columns) + "\n")
 	}
-	return b.String()
-}
-
-func (m Model) renderHelp() string {
-	rows := [][2]string{
-		{"j / ↓", "move down"},
-		{"k / ↑", "move up"},
-		{"g / G", "top / bottom"},
-		{"f", "filter by tag/name (server-side)"},
-		{"/", "fuzzy search (↑↓ to move, ⏎ connects)"},
-		{"t", "toggle SSM-only ↔ all EC2"},
-		{"p", "pin / unpin selected"},
-		{"y / Y", "copy instance ID / IP"},
-		{"r", "refresh inventory"},
-		{"enter", "connect (SSM shell)"},
-		{"?", "toggle this help"},
-		{"q / ctrl+c", "quit"},
-	}
-	var b strings.Builder
-	b.WriteString(m.styles().titleStyle.Render("lazyssm — keybindings"))
-	b.WriteString("\n\n")
-	for _, r := range rows {
-		b.WriteString("  " + m.styles().keyStyle.Render(padRight(r[0], 12)) + m.styles().detailValue.Render(r[1]) + "\n")
-	}
-	b.WriteString("\n" + m.styles().dimStyle.Render("press any key to return"))
 	return b.String()
 }
 
@@ -325,10 +322,6 @@ func (m Model) renderPreflight() string {
 		}
 	}
 	b.WriteString("\n")
-	if m.autoLogin && m.loginAttempted {
-		b.WriteString(m.styles().faintStyle.Render("  auto-login was attempted and credentials still fail — fix manually, then press r"))
-		b.WriteString("\n\n")
-	}
 	b.WriteString(m.styles().keyStyle.Render("r") + m.styles().faintStyle.Render(" re-check · ") +
 		m.styles().keyStyle.Render("esc/enter") + m.styles().faintStyle.Render(" dismiss · ") +
 		m.styles().keyStyle.Render("ctrl+c") + m.styles().faintStyle.Render(" quit"))

@@ -28,6 +28,7 @@ func newTestModel(t *testing.T) Model {
 		mode:        modeList,
 		searchInput: textinput.New(),
 		filterInput: textinput.New(),
+		pickerInput: textinput.New(),
 		width:       96,
 		height:      20,
 	}
@@ -89,7 +90,7 @@ func TestUpdatePreflightSetsBinariesOK(t *testing.T) {
 
 func TestToggleSourceBumpsSeq(t *testing.T) {
 	m := newTestModel(t)
-	nm, cmd := m.keyList("t")
+	nm, cmd := m.keyList(keyPress("t"))
 	m2 := nm.(Model)
 	if m2.src != inventory.SourceAllEC2 {
 		t.Error("source should toggle to all EC2")
@@ -104,7 +105,7 @@ func TestToggleSourceBumpsSeq(t *testing.T) {
 
 func TestRefreshBumpsSeq(t *testing.T) {
 	m := newTestModel(t)
-	nm, cmd := m.keyList("r")
+	nm, cmd := m.keyList(keyPress("r"))
 	m2 := nm.(Model)
 	if m2.fetchSeq != 1 || cmd == nil || !m2.loading {
 		t.Errorf("refresh: seq=%d loading=%v cmd!=nil=%v", m2.fetchSeq, m2.loading, cmd != nil)
@@ -112,13 +113,13 @@ func TestRefreshBumpsSeq(t *testing.T) {
 }
 
 func TestConnectGuards(t *testing.T) {
-	// Empty list: no panic, no cmd.
+	// An empty list returns no cmd and does not panic.
 	m := newTestModel(t)
 	if _, cmd := m.connect(); cmd != nil {
 		t.Error("connect on empty list should return no cmd")
 	}
 
-	// Not SSM-ready: status set, no cmd.
+	// An instance that is not SSM-ready sets a status and returns no cmd.
 	m = newTestModel(t)
 	m.all = sampleInstances()
 	m.recompute()
@@ -131,7 +132,7 @@ func TestConnectGuards(t *testing.T) {
 		t.Error("expected a status message for non-ready connect")
 	}
 
-	// Ready but binaries not cached OK: show modal, fire preflight to populate.
+	// Without binaries cached OK, connect opens the modal and runs preflight.
 	m = newTestModel(t)
 	m.all = sampleInstances()
 	m.recompute()
@@ -145,7 +146,7 @@ func TestConnectGuards(t *testing.T) {
 		t.Error("expected a preflight cmd to populate the modal")
 	}
 
-	// Ready and binaries cached OK: returns a connect cmd.
+	// With binaries cached OK, connect returns a session cmd.
 	m = newTestModel(t)
 	m.all = sampleInstances()
 	m.recompute()
@@ -159,7 +160,7 @@ func TestConnectGuards(t *testing.T) {
 
 func TestConnectUsesResolvedRegion(t *testing.T) {
 	m := newTestModel(t)
-	// No --region flag (m.region is empty); the SDK resolved it from the profile.
+	// m.region is empty without --region; the SDK resolved it from the profile.
 	m.clients = awscfg.Clients{Cfg: aws.Config{Region: "eu-west-1"}}
 	m.all = sampleInstances()
 	m.recompute()
@@ -191,8 +192,13 @@ func loaded(t *testing.T, items []inventory.Instance) Model {
 	return nm.(Model)
 }
 
-func press(m Model, keys string) Model {
-	for _, r := range keys {
+// keyPress is the message for typing the single character s.
+func keyPress(s string) tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: []rune(s)[0], Text: s}
+}
+
+func press(m Model, typed string) Model {
+	for _, r := range typed {
 		nm, _ := m.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
 		m = nm.(Model)
 	}
@@ -273,7 +279,8 @@ func TestTogglePinReSorts(t *testing.T) {
 	}
 }
 
-// expiredChecks is a preflight result whose identity check failed on SSO expiry.
+// expiredChecks is a preflight result whose identity check failed because the
+// SSO session expired.
 func expiredChecks() []preflight.Check {
 	return []preflight.Check{
 		{Name: "aws CLI", Binary: true, OK: true},
@@ -292,8 +299,8 @@ func healthyChecks() []preflight.Check {
 	}
 }
 
-// The returned tea.Cmd is only checked for nil-ness, never invoked — invoking
-// it would exec `aws sso login`. Constructing it is side-effect free.
+// The auto-login tests check the returned tea.Cmd only for nil and never run
+// it, since it would exec `aws sso login`. Building it has no side effects.
 
 func TestAutoLoginFiresOnPreflightExpiry(t *testing.T) {
 	m := newTestModel(t)
@@ -320,8 +327,11 @@ func TestAutoLoginSpendsOneAttempt(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("second expired preflight should not fire another login")
 	}
-	if !m2.showPreflight {
-		t.Error("spent attempt should fall back to the preflight modal")
+	if m2.showPreflight {
+		t.Error("a spent attempt should leave the expiry to the list panel, not the checklist")
+	}
+	if nm, _ = m2.Update(instancesMsg{err: errors.New("the SSO session associated with this profile has expired")}); !nm.(Model).needsSignIn() {
+		t.Error("the list should offer L to sign in")
 	}
 }
 
@@ -436,7 +446,7 @@ func TestRecomputeSearchAndClamp(t *testing.T) {
 		t.Errorf("cursor should clamp to 0, got %d", m.cursor)
 	}
 
-	// No match must not panic and cursor stays valid.
+	// No match must not panic, and the cursor stays valid.
 	m.searchInput.SetValue("zzzzz")
 	m.recompute()
 	if len(m.visible) != 0 || m.cursor != 0 {

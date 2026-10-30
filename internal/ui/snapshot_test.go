@@ -10,7 +10,8 @@ import (
 	"github.com/chalvinwz/lazyssm/internal/inventory"
 )
 
-// TestRenderSnapshot prints a frame for manual inspection: go test -run Snapshot -v
+// TestRenderSnapshot writes a frame to the file named by SNAP_OUT, when set,
+// for manual inspection.
 func TestRenderSnapshot(t *testing.T) {
 	all := []inventory.Instance{
 		{Name: "Group7-app-public", InstanceID: "i-07a1b2c3", SSMReady: true, PingStatus: "Online", State: "running", IP: "10.0.4.12", PlatformType: "Linux", AgentStatus: "Latest", Pinned: true, Tags: map[string]string{"Env": "prod", "Team": "g7"}},
@@ -33,8 +34,8 @@ func TestRenderSnapshot(t *testing.T) {
 		}
 	}
 
-	// Smoke: render must not panic and must produce output across sizes,
-	// including the compact fallback and the empty/help/search states.
+	// Smoke test: at every size, compact fallback included, the list renders
+	// output with and without instances, and the help overlay does not panic.
 	sizes := [][2]int{{96, 20}, {120, 40}, {60, 12}, {30, 8}, {200, 50}}
 	for _, sz := range sizes {
 		mm := m
@@ -52,8 +53,8 @@ func TestRenderSnapshot(t *testing.T) {
 	}
 }
 
-// TestRenderEmptyListShowsPrompt asserts the empty-list content (not just that
-// the frame is non-empty): with no instances the list panel guides the user.
+// TestRenderEmptyListShowsPrompt checks that an empty list panel tells the user
+// what to do, not just that the frame is non-empty.
 func TestRenderEmptyListShowsPrompt(t *testing.T) {
 	m := newTestModel(t) // 96x20 -> renderSplit; no instances loaded
 	out := m.render()

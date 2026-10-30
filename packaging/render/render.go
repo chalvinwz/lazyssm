@@ -15,8 +15,7 @@ const releaseDownloadBase = "https://github.com/chalvinwz/lazyssm/releases/downl
 var (
 	tagRE    = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
 	sha256RE = regexp.MustCompile(`^[0-9a-f]{64}$`)
-	// checksumLineRE matches one `sha256sum`-style line as written by
-	// GoReleaser: 64 lowercase hex digits, two spaces, the file name.
+	// checksumLineRE matches one line of GoReleaser's checksums.txt.
 	checksumLineRE = regexp.MustCompile(`^([0-9a-f]{64})  (\S+)$`)
 )
 
@@ -50,7 +49,7 @@ func Formula(tmpl, tag, sha256 string) (string, error) {
 
 // ScoopManifest renders the Scoop manifest template for tag (vX.Y.Z) using the
 // release's checksums.txt contents, which must list both Windows zip assets.
-// The rendered output must be valid JSON.
+// It fails if the rendered output is not valid JSON.
 func ScoopManifest(tmpl, tag, checksums string) (string, error) {
 	version, err := versionOf(tag)
 	if err != nil {

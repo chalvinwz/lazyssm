@@ -6,19 +6,10 @@ import (
 	"github.com/chalvinwz/lazyssm/internal/inventory"
 )
 
-// parseFilter turns a filter-bar string into an inventory.Filter, returning any
-// tokens it could not interpret so the caller can surface them rather than
-// silently dropping the constraint.
-//
-// Tokens:
-//   - "tag:Key=Value"  -> tag constraint
-//   - "name:prefix"    -> Name prefix
-//   - bare "prefix"     -> Name prefix (last one wins; shadowed ones reported)
-//
-// A "tag:" token without "=Value" (or with an empty key), and any Name prefix
-// shadowed by a later one, are reported as ignored.
-//
-// Example: "tag:Env=prod web-" -> Tags{Env:prod}, NamePrefix "web-".
+// parseFilter parses the filter bar. "tag:Key=Value" adds a tag constraint;
+// "name:prefix" or a bare word sets the Name prefix, and the last one wins. It
+// returns the tokens it ignored (a "tag:" token without a key or "=", or a
+// shadowed Name prefix) so the caller can report them.
 func parseFilter(s string) (inventory.Filter, []string) {
 	f := inventory.Filter{Tags: map[string]string{}}
 	var ignored []string

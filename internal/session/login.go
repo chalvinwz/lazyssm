@@ -8,11 +8,12 @@ import (
 
 // LoginEndedMsg is delivered to the TUI when `aws sso login` exits.
 type LoginEndedMsg struct {
-	Err error
+	Err    error
+	Output string // the tail of what the CLI wrote to stderr
 }
 
-// buildLoginArgs assembles the `aws sso login` arguments, threading the active
-// profile/region exactly like buildArgs does for start-session.
+// buildLoginArgs returns the `aws sso login` arguments, passing the active
+// profile and region the same way buildArgs does.
 func buildLoginArgs(profile, region string) []string {
 	args := []string{"sso", "login"}
 	if profile != "" {
@@ -24,12 +25,13 @@ func buildLoginArgs(profile, region string) []string {
 	return args
 }
 
-// LoginCmd returns a tea.Cmd that suspends the TUI, runs `aws sso login` with
-// the terminal attached (the browser flow prints to it and may block on
-// input), and emits a LoginEndedMsg when the login exits (restoring the TUI).
+// LoginCmd returns a tea.Cmd that suspends the TUI, runs `aws sso login`, and
+// emits a LoginEndedMsg when it exits and the TUI resumes. The terminal stays
+// attached because the browser flow prints to it and may wait for input.
 func LoginCmd(profile, region string) tea.Cmd {
 	cmd := exec.Command("aws", buildLoginArgs(profile, region)...)
+	tail := captureStderr(cmd)
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
-		return LoginEndedMsg{Err: err}
+		return LoginEndedMsg{Err: err, Output: tail.String()}
 	})
 }

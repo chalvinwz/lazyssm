@@ -3,16 +3,20 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"github.com/aws/smithy-go"
 	"github.com/sahilm/fuzzy"
 
 	"github.com/chalvinwz/lazyssm/internal/awscfg"
 	"github.com/chalvinwz/lazyssm/internal/clipboard"
+	"github.com/chalvinwz/lazyssm/internal/explain"
 	"github.com/chalvinwz/lazyssm/internal/inventory"
 	"github.com/chalvinwz/lazyssm/internal/preflight"
 	"github.com/chalvinwz/lazyssm/internal/session"
@@ -26,10 +30,11 @@ const (
 	modeFilter
 	modeSearch
 	modeHelp
+	modePicker
 )
 
-// Network deadlines for background AWS work so a wedged endpoint can't leave the
-// TUI spinning forever (only escape would be ctrl+c).
+// Deadlines for background AWS calls, so a wedged endpoint cannot leave the
+// TUI spinning with ctrl+c as the only way out.
 const (
 	fetchTimeout     = 30 * time.Second
 	preflightTimeout = 15 * time.Second
@@ -53,25 +58,35 @@ type Model struct {
 	mode        mode
 	filterInput textinput.Model
 	searchInput textinput.Model
+	pickerInput textinput.Model
+	picker      picker
 
 	width, height int
 	loading       bool
 	status        string
 	err           error
+	explained     explain.Explanation  // err in plain words, set with it
+	failed        *explain.Explanation // the last connect or sign-in failure, until the next fetch
+	showErr       bool                 // e: the detail panel shows the full error
 
 	preflight     []preflight.Check
 	showPreflight bool
-	binariesOK    bool // cached from the last preflight run; avoids re-probing on connect
+	binariesOK    bool   // cached from the last preflight run; avoids re-probing on connect
+	account       string // AWS account ID from the last identity check
 
 	autoLogin      bool // effective --auto-login (flag OR persisted config)
 	loginInFlight  bool // `aws sso login` currently running via ExecProcess
 	loginAttempted bool // the single attempt for the current expiry event is spent
 
-	fetchSeq int  // bumped per issued fetch; replies with a stale seq are dropped
-	demo     bool // LAZYSSM_DEMO: serve fixed sample data, never call AWS
+	fetchSeq  int  // bumped per issued fetch; replies with a stale seq are dropped
+	switchSeq int  // bumped per issued profile/region switch, likewise
+	gen       int  // bumped per completed switch; preflight replies for older clients are dropped
+	unsaved   bool // the switched-to profile/region is saved once a fetch there works
+	demo      bool // LAZYSSM_DEMO: serve fixed sample data, never call AWS
 
 	copyText     func(label, text string) (cmd tea.Cmd, viaTerminal bool) // clipboard.Copy outside tests
 	startSession func(instanceID, profile, region string) tea.Cmd         // session.ConnectCmd outside tests
+	listProfiles func() ([]awscfg.Profile, error)                         // awscfg.Profiles outside tests and demo
 }
 
 // instancesMsg carries the result of a background inventory fetch. seq ties the
@@ -83,8 +98,10 @@ type instancesMsg struct {
 	err     error
 }
 
-// preflightMsg carries the result of background credential checks.
+// preflightMsg carries the result of background credential checks. gen ties it
+// to the clients it checked, so a result from before a switch is discarded.
 type preflightMsg struct {
+	gen    int
 	checks []preflight.Check
 }
 
@@ -96,6 +113,9 @@ func New(clients awscfg.Clients, st *store.Store, profile, region string, autoLo
 	si := textinput.New()
 	si.SetVirtualCursor(true)
 	si.SetWidth(48)
+	pi := textinput.New()
+	pi.SetVirtualCursor(true)
+	pi.SetWidth(32)
 	theme := "default"
 	if st != nil {
 		theme = st.Theme
@@ -108,11 +128,13 @@ func New(clients awscfg.Clients, st *store.Store, profile, region string, autoLo
 		autoLogin:    autoLogin,
 		copyText:     clipboard.Copy,
 		startSession: session.ConnectCmd,
+		listProfiles: awscfg.Profiles,
 		src:          inventory.SourceSSMOnly,
 		mode:         modeList,
 		loading:      true,
 		filterInput:  fi,
 		searchInput:  si,
+		pickerInput:  pi,
 	}.WithTheme(theme)
 }
 
@@ -143,19 +165,18 @@ func (m Model) fetchCmd() tea.Cmd {
 
 func (m Model) preflightCmd() tea.Cmd {
 	p := preflight.Params{Profile: m.profile, Region: m.clients.Region(), STS: m.clients.STS}
+	gen := m.gen
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), preflightTimeout)
 		defer cancel()
-		return preflightMsg{checks: preflight.Run(ctx, p)}
+		return preflightMsg{gen: gen, checks: preflight.Run(ctx, p)}
 	}
 }
 
-// tryAutoLogin returns a LoginCmd when auto-login should fire for an SSO
-// expiry, spending the single attempt for the current expiry event. It returns
-// nil when disabled, in demo mode, the attempt is spent, or a login is already
-// in flight. Update is single-threaded, so spending the attempt before the cmd
-// runs keeps the guard race-free even when preflight and fetch both report
-// expiry in the same batch.
+// tryAutoLogin returns a LoginCmd for an SSO expiry, or nil when auto-login is
+// off, in demo mode, already tried for this expiry, or a login is in flight.
+// Update is single-threaded, so spending the attempt before the cmd runs keeps
+// the guard race-free when preflight and fetch report the same expiry at once.
 func (m *Model) tryAutoLogin() tea.Cmd {
 	if !m.autoLogin || m.demo || m.loginAttempted || m.loginInFlight {
 		return nil
@@ -164,6 +185,50 @@ func (m *Model) tryAutoLogin() tea.Cmd {
 	m.loginInFlight = true
 	m.status = "SSO session expired — running aws sso login…"
 	return session.LoginCmd(m.profile, m.region)
+}
+
+// signIn suspends the TUI to run aws sso login for the current profile. On
+// success, LoginEndedMsg re-checks credentials and reloads the list.
+func (m Model) signIn() (tea.Model, tea.Cmd) {
+	if m.demo {
+		m.status = "demo: would run aws sso login --profile " + profileLabel(m.profile)
+		return m, nil
+	}
+	if m.loginInFlight {
+		return m, nil
+	}
+	m.loginInFlight = true
+	m.failed = nil
+	m.status = "signing in with aws sso login…"
+	return m, session.LoginCmd(m.profile, m.region)
+}
+
+// showFailure explains a failed connect or sign-in in the status line and keeps
+// what the CLI printed for the error panel, where e shows it and y copies it.
+func (m *Model) showFailure(prefix string, err error, output string) {
+	x := explain.Error(err, m.clients.Region())
+	if out := strings.TrimSpace(output); out != "" {
+		x.Raw = out
+	}
+	m.failed, m.showErr = &x, false
+	m.status = prefix + ": " + x.Status
+}
+
+// instanceName names an instance for the status line, by its Name tag when it
+// has one.
+func (m Model) instanceName(id string) string {
+	for _, in := range m.all {
+		if in.InstanceID == id && in.Name != "" {
+			return in.Name
+		}
+	}
+	return id
+}
+
+// needsSignIn reports whether the last fetch failed because the SSO session
+// expired, by its own error or by the identity check run beside it.
+func (m Model) needsSignIn() bool {
+	return m.err != nil && (m.explained.SignIn || preflight.SSOExpiredFrom(m.preflight))
 }
 
 // Update handles messages.
@@ -178,9 +243,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil // a newer fetch superseded this reply
 		}
 		m.loading = false
+		m.failed = nil // the fetch result supersedes the older failure
 		if msg.err != nil {
 			m.err = msg.err
-			m.status = "fetch error: " + msg.err.Error()
+			m.explained = explain.Error(msg.err, m.clients.Region())
+			m.status = m.explained.Status
+			if m.needsSignIn() {
+				m.status = "SSO session expired for " + profileLabel(m.profile)
+			}
 			if preflight.IsSSOExpired(msg.err) {
 				if cmd := m.tryAutoLogin(); cmd != nil {
 					return m, cmd
@@ -188,7 +258,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		m.err = nil
+		m.err, m.showErr = nil, false
 		m.loginAttempted = false // a successful AWS call proves the expiry event is over
 		m.applyPins(msg.items)
 		m.all = msg.items
@@ -197,50 +267,75 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.warning != "" {
 			m.status += " · " + msg.warning
 		}
+		m.saveSwitch()
 		return m, nil
 
 	case preflightMsg:
+		if msg.gen != m.gen {
+			return m, nil // checked the clients from before a switch
+		}
 		m.preflight = msg.checks
 		m.binariesOK = preflight.BinariesOKFrom(msg.checks)
+		m.account = preflight.AccountFrom(msg.checks)
 		if m.loginInFlight {
-			// Result predates the suspended login; LoginEndedMsg re-runs preflight.
+			// The result predates the suspended login, and LoginEndedMsg
+			// re-runs preflight.
 			return m, nil
 		}
 		if !preflight.SSOExpiredFrom(msg.checks) {
 			m.loginAttempted = false // expiry resolved; a later expiry gets a fresh attempt
 		} else if cmd := m.tryAutoLogin(); cmd != nil {
-			m.showPreflight = false // don't render the modal over the login handover
+			m.showPreflight = false // keep the checklist off the login handover
 			return m, cmd
 		}
-		m.showPreflight = !preflight.AllOK(msg.checks)
+		// Credential and region problems show in the list panel, where the
+		// failed fetch explains them. The checklist only opens on connect, for
+		// a missing aws CLI or plugin, and closes once a re-check finds them.
+		if m.showPreflight {
+			m.showPreflight = !m.binariesOK
+		}
 		return m, nil
 
 	case session.LoginEndedMsg:
 		m.loginInFlight = false
 		if msg.Err != nil {
-			m.status = "sso login failed: " + msg.Err.Error()
-		} else {
-			m.status = "sso login finished — re-checking credentials…"
+			// Nothing was refreshed, so a reload would only fail the same way
+			// and replace the reason. loginAttempted stays spent, so
+			// auto-login does not loop either.
+			m.showFailure("sign-in failed", session.CLIError("SSO", msg.Output, msg.Err), msg.Output)
+			return m, nil
 		}
-		// Re-verify and refetch regardless of outcome; loginAttempted stays
-		// spent, so a still-broken identity opens the modal instead of looping.
+		m.status = "signed in — re-checking credentials…"
 		m.fetchSeq++
 		m.loading = true
 		return m, tea.Batch(m.preflightCmd(), m.fetchCmd())
 
 	case session.SessionEndedMsg:
-		if msg.Err != nil {
-			m.status = "session ended: " + msg.Err.Error()
-		} else {
+		if msg.Err == nil {
 			m.status = "session ended"
+			return m, nil
 		}
+		err := session.CLIError("SSM", msg.Output, msg.Err)
+		prefix := "session with " + m.instanceName(msg.InstanceID) + " ended"
+		var op *smithy.OperationError
+		if errors.As(err, &op) && op.OperationName == "StartSession" {
+			prefix = "couldn't connect to " + m.instanceName(msg.InstanceID)
+		}
+		m.showFailure(prefix, err, msg.Output)
 		return m, nil
+
+	case switchedMsg:
+		return m.applySwitch(msg)
 
 	case clipboard.CopiedMsg:
 		if msg.Err != nil {
 			m.status = "copy failed: " + msg.Err.Error()
 		} else {
-			m.status = "copied " + msg.Text + " to clipboard"
+			what := msg.Text
+			if msg.Label == errorLabel {
+				what = "the " + errorLabel
+			}
+			m.status = "copied " + what + " to clipboard"
 		}
 		return m, nil
 
@@ -253,16 +348,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	key := msg.String()
+	pressed := msg.String()
 
-	// Global quit.
-	if key == "ctrl+c" {
+	// ctrl+c quits from every mode, the preflight modal included.
+	if pressed == "ctrl+c" {
 		return m, tea.Quit
 	}
 
-	// Preflight modal: dismiss with any key, re-check with r.
+	// The preflight modal takes every key: r re-checks, and esc, q or enter
+	// dismiss it.
 	if m.showPreflight {
-		switch key {
+		switch pressed {
 		case "r":
 			m.fetchSeq++
 			m.loading = true
@@ -275,37 +371,39 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	switch m.mode {
 	case modeFilter:
-		return m.keyFilter(msg, key)
+		return m.keyFilter(msg, pressed)
 	case modeSearch:
-		return m.keySearch(msg, key)
+		return m.keySearch(msg, pressed)
+	case modePicker:
+		return m.keyPicker(msg, pressed)
 	case modeHelp:
 		m.mode = modeList
 		return m, nil
 	default:
-		return m.keyList(key)
+		return m.keyList(msg)
 	}
 }
 
-func (m Model) keyList(key string) (tea.Model, tea.Cmd) {
-	switch key {
-	case "q":
+func (m Model) keyList(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, keys.Quit.Binding):
 		return m, tea.Quit
-	case "j", "down":
+	case key.Matches(msg, keys.Down.Binding):
 		m.moveCursor(1)
-	case "k", "up":
+	case key.Matches(msg, keys.Up.Binding):
 		m.moveCursor(-1)
-	case "g", "home":
+	case key.Matches(msg, keys.Top.Binding):
 		m.cursor = 0
-	case "G", "end":
+	case key.Matches(msg, keys.Bottom.Binding):
 		m.cursor = max(0, len(m.visible)-1)
-	case "?":
+	case key.Matches(msg, keys.Help.Binding):
 		m.mode = modeHelp
-	case "r":
+	case key.Matches(msg, keys.Refresh.Binding):
 		m.fetchSeq++
 		m.loading = true
 		m.status = "refreshing…"
 		return m, m.fetchCmd()
-	case "t":
+	case key.Matches(msg, keys.Toggle.Binding):
 		if m.src == inventory.SourceSSMOnly {
 			m.src = inventory.SourceAllEC2
 			m.status = "source: all EC2"
@@ -316,21 +414,38 @@ func (m Model) keyList(key string) (tea.Model, tea.Cmd) {
 		m.fetchSeq++
 		m.loading = true
 		return m, m.fetchCmd()
-	case "p":
+	case key.Matches(msg, keys.Pin.Binding):
 		return m.togglePin()
-	case "y":
+	case key.Matches(msg, keys.Profile.Binding):
+		return m.openProfilePicker()
+	case key.Matches(msg, keys.Region.Binding):
+		return m.openRegionPicker()
+	case key.Matches(msg, keys.SignIn.Binding):
+		return m.signIn()
+	case key.Matches(msg, keys.Error.Binding):
+		if _, ok := m.lastError(); !ok {
+			m.status = "no error to show"
+			return m, nil
+		}
+		m.showErr = !m.showErr
+	case key.Matches(msg, keys.CloseError.Binding):
+		m.showErr = false
+	case key.Matches(msg, keys.CopyID.Binding):
+		if m.errorShown() {
+			return m.copyError()
+		}
 		return m.copySelected(false)
-	case "Y":
+	case key.Matches(msg, keys.CopyIP.Binding):
 		return m.copySelected(true)
-	case "f":
+	case key.Matches(msg, keys.Filter.Binding):
 		m.mode = modeFilter
 		m.filterInput.SetValue(m.filter.String())
 		return m, m.filterInput.Focus()
-	case "/":
+	case key.Matches(msg, keys.Search.Binding):
 		m.mode = modeSearch
 		m.searchInput.Reset()
 		return m, m.searchInput.Focus()
-	case "enter":
+	case key.Matches(msg, keys.Connect.Binding):
 		return m.connect()
 	}
 	return m, nil
@@ -371,7 +486,7 @@ func (m Model) keySearch(msg tea.KeyPressMsg, key string) (tea.Model, tea.Cmd) {
 		m.recompute()
 		return m, nil
 	case "enter":
-		// fzf-style: Enter connects the highlighted instance directly.
+		// As in fzf, enter connects to the highlighted instance directly.
 		m.mode = modeList
 		m.searchInput.Blur()
 		return m.connect()
@@ -408,6 +523,8 @@ func (m Model) routeInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.filterInput, cmd = m.filterInput.Update(msg)
 	case modeSearch:
 		return m.updateSearch(msg) // e.g. a paste, which arrives as its own msg
+	case modePicker:
+		return m.updatePicker(msg)
 	}
 	return m, cmd
 }
@@ -478,21 +595,23 @@ func (m Model) connect() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if !m.binariesOK {
-		// Use the cached preflight; if it hasn't run yet, kick one off to
-		// populate the modal instead of blocking the UI thread re-probing.
+		// Use the cached preflight. If none has run yet, start one to fill the
+		// modal rather than block the UI thread re-probing.
 		m.showPreflight = true
 		if len(m.preflight) == 0 {
 			return m, m.preflightCmd()
 		}
 		return m, nil
 	}
+	m.failed = nil
 	m.status = "connecting to " + inst.InstanceID + "…"
-	// The resolved region rather than the --region flag, so the session opens in
+	// Pass the resolved region, not the --region flag, so the session opens in
 	// the region whose inventory is on screen.
 	return m, m.startSession(inst.InstanceID, m.profile, m.clients.Region())
 }
 
-// applyPins stamps pinned state from the store onto the given instances.
+// applyPins stamps pinned state from the store onto items and re-sorts them in
+// place.
 func (m Model) applyPins(items []inventory.Instance) {
 	if m.store == nil {
 		return
@@ -507,9 +626,8 @@ func (m Model) applyPins(items []inventory.Instance) {
 // instance while it stays visible.
 func (m *Model) recompute() { m.recomputeKeeping(m.selectedID()) }
 
-// recomputeKeeping rebuilds the visible slice by applying the fuzzy search
-// query, then puts the cursor on the instance with ID keep, or clamps it when
-// that instance is no longer visible.
+// recomputeKeeping rebuilds the visible slice from the search query and puts
+// the cursor on the instance with ID keep, or clamps it when keep is not shown.
 func (m *Model) recomputeKeeping(keep string) {
 	q := strings.TrimSpace(m.searchInput.Value())
 	if q == "" {
@@ -533,7 +651,7 @@ func (m *Model) recomputeKeeping(keep string) {
 	m.cursor = clamp(m.cursor, 0, max(0, len(m.visible)-1))
 }
 
-// selectedID returns the instance ID under the cursor, or "" when there is none.
+// selectedID returns the instance ID under the cursor, or "" if there is none.
 func (m Model) selectedID() string {
 	if m.cursor < 0 || m.cursor >= len(m.visible) {
 		return ""
@@ -541,12 +659,9 @@ func (m Model) selectedID() string {
 	return m.visible[m.cursor].InstanceID
 }
 
-// rowSource adapts instances to fuzzy.Source.
-//
-// Match against the Name only (instance ID as fallback). Concatenating the
-// instance ID or tags would let stray hex digits in the ID satisfy a digit in
-// the pattern (e.g. "group7" matching every row via a "7" in some ID), turning
-// the filter into a no-op reorder.
+// rowSource adapts instances to fuzzy.Source. It matches the Name alone, or the
+// instance ID when there is no Name: with IDs or tags included, their hex
+// digits would match any digit in the query, so "group7" would keep every row.
 type rowSource []inventory.Instance
 
 func (r rowSource) Len() int { return len(r) }

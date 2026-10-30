@@ -132,7 +132,7 @@ func TestDemoFrames(t *testing.T) {
 			}
 			if size[0] >= 60 {
 				lines := strings.Split(frame, "\n")
-				// Check the panel body separately from the wrapped title and footer.
+				// Check the panel body apart from the wrapped title and footer.
 				for _, line := range lines[1 : len(lines)-2] {
 					if lipgloss.Width(line) > size[0] {
 						t.Errorf("body overflow for %s at %d: %q", theme, size[0], line)
@@ -294,5 +294,23 @@ func TestSelectedRowHasOneHighlight(t *testing.T) {
 		if !strings.Contains(ansi.Strip(row), "running") || !strings.Contains(ansi.Strip(row), "●") {
 			t.Fatal("selected row lost status")
 		}
+	}
+}
+
+func TestListKeepsRightPadding(t *testing.T) {
+	m := newTestModel(t)
+	m.visible = []inventory.Instance{{Name: "web", SSMReady: true}}
+	header := strings.Split(ansi.Strip(m.listContent(80, 20)), "\n")[1]
+	if !strings.HasSuffix(header, "SSM") || lipgloss.Width(header) != 80-listRightPad {
+		t.Errorf("the last heading should end %d cells before the border, got %d wide: %q", listRightPad, lipgloss.Width(header), header)
+	}
+	if row := m.rowLine(0, m.visible[0], 80, m.listColumns(80)); lipgloss.Width(row) != 80 {
+		t.Errorf("the selected row's highlight should still span the panel, got %d", lipgloss.Width(row))
+	}
+	// With no room to spare, the padding goes before the name is cut.
+	name := "web-production-eu-west-1-blue"
+	m.visible = []inventory.Instance{{Name: name}}
+	if row := ansi.Strip(m.rowLine(0, m.visible[0], 3+len(name), m.listColumns(3+len(name)))); !strings.Contains(row, name) {
+		t.Errorf("padding should never clip a name: %q", row)
 	}
 }

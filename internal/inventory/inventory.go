@@ -27,7 +27,7 @@ const ec2DeniedWarning = "no ec2:DescribeInstances access, names are SSM hostnam
 type Source int
 
 const (
-	// SourceSSMOnly shows only SSM-managed (connectable) nodes. Default.
+	// SourceSSMOnly shows only SSM managed nodes. It is the default.
 	SourceSSMOnly Source = iota
 	// SourceAllEC2 shows all EC2 instances, marking non-SSM ones not-ready.
 	SourceAllEC2
@@ -60,7 +60,7 @@ func (f Filter) String() string {
 // Sort orders instances pinned-first, then SSM-ready, then by Name/ID.
 func Sort(in []Instance) { sortInstances(in) }
 
-// Instance is a merged view of an EC2 instance and/or SSM managed node.
+// Instance is a merged view of an EC2 instance, an SSM managed node, or both.
 type Instance struct {
 	InstanceID   string
 	Name         string // EC2 Name tag; for nodes without an EC2 record, the SSM name or hostname
@@ -71,7 +71,7 @@ type Instance struct {
 	State        string // EC2 instance state
 	LaunchTime   time.Time
 	Tags         map[string]string
-	SSMReady     bool // online in SSM -> connectable
+	SSMReady     bool // online in SSM, so connectable
 	Pinned       bool
 }
 
@@ -106,8 +106,8 @@ type EC2API interface {
 	DescribeInstances(ctx context.Context, in *ec2.DescribeInstancesInput, optFns ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error)
 }
 
-// sortedKeys returns a map's keys in stable sorted order, for deterministic
-// rendering and request building.
+// sortedKeys returns m's keys sorted, so rendered filters, requests and tests
+// are deterministic.
 func sortedKeys(m map[string]string) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
@@ -119,7 +119,6 @@ func sortedKeys(m map[string]string) []string {
 
 // buildEC2Filters translates a Filter into EC2 DescribeInstances filters.
 func buildEC2Filters(f Filter) []ec2types.Filter {
-	// Deterministic order for stable requests/tests.
 	keys := sortedKeys(f.Tags)
 	out := make([]ec2types.Filter, 0, len(keys)+1)
 	for _, k := range keys {
@@ -162,8 +161,8 @@ func merge(ssmNodes []ssmNode, ec2Insts []ec2Inst, src Source, filterActive bool
 	default: // SourceSSMOnly
 		for _, n := range ssmNodes {
 			e, hasEC2 := ec2ByID[n.ID]
-			// Server-side filtering is EC2-based; when a filter is active a node
-			// that is absent from the filtered EC2 set is considered filtered out.
+			// Server-side filtering is EC2-based; when a filter is active, a
+			// node absent from the filtered EC2 set is considered filtered out.
 			if filterActive && !hasEC2 {
 				continue
 			}
@@ -240,8 +239,8 @@ func sortInstances(in []Instance) {
 	})
 }
 
-// naturalLess compares two strings so embedded number runs sort
-// numerically: "g-2" < "g-10". Non-digit runs compare byte-wise.
+// naturalLess reports whether a sorts before b, comparing digit runs
+// numerically ("g-2" < "g-10") and everything else byte-wise.
 func naturalLess(a, b string) bool {
 	i, j := 0, 0
 	for i < len(a) && j < len(b) {
@@ -278,12 +277,10 @@ func naturalLess(a, b string) bool {
 	return len(a)-i < len(b)-j
 }
 
-// Fetch retrieves SSM nodes and EC2 instances concurrently, applies the
-// server-side filter, and returns the merged inventory for the selected source.
-//
-// EC2 access is optional when browsing SSM nodes without a filter: if
-// DescribeInstances is denied, Fetch returns the SSM nodes anyway, named by
-// hostname, with a warning saying what is missing.
+// Fetch retrieves SSM nodes and EC2 instances concurrently and returns the
+// merged, filtered inventory for src. Browsing SSM nodes without a filter does
+// not need EC2 access: if DescribeInstances is denied, Fetch returns the nodes
+// named by hostname, with a warning.
 func Fetch(ctx context.Context, ssmAPI SSMAPI, ec2API EC2API, f Filter, src Source) (items []Instance, warning string, err error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -298,7 +295,7 @@ func Fetch(ctx context.Context, ssmAPI SSMAPI, ec2API EC2API, f Filter, src Sour
 
 	ssmNodes, err := fetchSSM(ctx, ssmAPI)
 	if err != nil {
-		cancel() // the EC2 half is useless now; don't wait out its deadline
+		cancel() // the EC2 half is useless now; do not wait out its deadline
 		<-ec2Done
 		return nil, "", err
 	}

@@ -46,7 +46,7 @@ func TestCopyKeysCopyTheSelectedInstance(t *testing.T) {
 		t.Run(tc.key, func(t *testing.T) {
 			m := copyModel(t)
 			calls := recordCopies(&m, false)
-			_, cmd := m.keyList(tc.key)
+			_, cmd := m.keyList(keyPress(tc.key))
 			if cmd == nil {
 				t.Fatal("copy must return the clipboard command")
 			}
@@ -61,7 +61,7 @@ func TestCopyIPWithoutIPCopiesNothing(t *testing.T) {
 	m := copyModel(t)
 	m.cursor = 1 // no-ip-box
 	calls := recordCopies(&m, false)
-	nm, cmd := m.keyList("Y")
+	nm, cmd := m.keyList(keyPress("Y"))
 	if cmd != nil || len(*calls) != 0 {
 		t.Fatalf("no IP must copy nothing, got cmd=%v calls=%+v", cmd != nil, *calls)
 	}
@@ -73,7 +73,7 @@ func TestCopyIPWithoutIPCopiesNothing(t *testing.T) {
 func TestCopyWithEmptyListIsNoop(t *testing.T) {
 	m := newTestModel(t)
 	calls := recordCopies(&m, false)
-	if _, cmd := m.keyList("y"); cmd != nil || len(*calls) != 0 {
+	if _, cmd := m.keyList(keyPress("y")); cmd != nil || len(*calls) != 0 {
 		t.Errorf("empty list must not copy, got cmd=%v calls=%+v", cmd != nil, *calls)
 	}
 }
@@ -81,7 +81,7 @@ func TestCopyWithEmptyListIsNoop(t *testing.T) {
 func TestCopyViaTerminalReportsImmediately(t *testing.T) {
 	m := copyModel(t)
 	recordCopies(&m, true)
-	nm, _ := m.keyList("y")
+	nm, _ := m.keyList(keyPress("y"))
 	if s := nm.(Model).status; !strings.Contains(s, "i-0a2539774a1136205") || !strings.Contains(s, "terminal") {
 		t.Errorf("status %q should name the ID and the terminal clipboard", s)
 	}

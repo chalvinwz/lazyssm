@@ -22,12 +22,12 @@ import (
 
 // Shared fixtures for the installer tests. Nothing here touches the network:
 // a fake release is a local directory that LAZYSSM_DOWNLOAD_BASE points at.
-// This file builds on every OS; only the tests that run a shell skip Windows.
+// This file builds on every OS; only the tests that run sh skip Windows.
 
 // installSH is the script under test, relative to this package's directory.
 const installSH = "../install.sh"
 
-// scriptTimeout bounds one installer run, so a hang (say, a read from stdin)
+// scriptTimeout bounds one script run, so a hang such as a read from stdin
 // fails the test instead of stalling the suite.
 const scriptTimeout = 2 * time.Minute
 
@@ -40,7 +40,7 @@ type fileSpec struct {
 	Mode os.FileMode
 }
 
-// fakeBinarySH is a stand-in lazyssm: a script that prints what
+// fakeBinarySH returns a stand-in lazyssm: a script that prints what
 // `lazyssm --version` prints, so the tests never need a real build.
 func fakeBinarySH(version string) []byte {
 	return []byte("#!/bin/sh\necho \"lazyssm " + version + "\"\n")
@@ -127,7 +127,7 @@ func fakeRelease(t *testing.T, tag string, assets map[string][]byte) (base strin
 }
 
 // toolPath returns a temp dir of symlinks to the real tools, for a hermetic
-// PATH that holds only what a test means the installer to find. A tool this
+// PATH that holds only what a test means the script to find. A tool this
 // machine lacks is left out, so alternatives such as sha256sum and shasum can
 // both be listed.
 func toolPath(t *testing.T, tools ...string) string {

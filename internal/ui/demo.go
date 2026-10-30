@@ -11,9 +11,8 @@ import (
 	"github.com/chalvinwz/lazyssm/internal/store"
 )
 
-// NewDemo builds a Model preloaded with fixed sample data and no AWS dependency,
-// for recording screenshots/GIFs via LAZYSSM_DEMO=1. It never calls AWS: fetch,
-// preflight, and connect are all short-circuited.
+// NewDemo returns a Model that serves fixed sample data and never calls AWS,
+// for recording screenshots and GIFs with LAZYSSM_DEMO=1.
 func NewDemo(profile, region string) Model {
 	if region == "" {
 		region = "ap-southeast-3"
@@ -21,11 +20,30 @@ func NewDemo(profile, region string) Model {
 	if profile == "" {
 		profile = "demo"
 	}
-	st, _ := store.LoadFrom("") // in-memory; no disk writes
+	st, _ := store.LoadFrom("") // in-memory: never fails, never writes to disk
 	m := New(awscfg.Clients{Cfg: aws.Config{Region: region}}, st, profile, region, false)
 	m.demo = true
 	m.binariesOK = true // skip the preflight modal in demo mode
+	m.listProfiles = func() ([]awscfg.Profile, error) { return demoProfiles, nil }
 	return m
+}
+
+// demoProfiles stands in for ~/.aws/config in demo recordings.
+var demoProfiles = []awscfg.Profile{
+	{Name: "demo", Region: "ap-southeast-3"},
+	{Name: "prod", Region: "eu-west-1", AccountID: "111122223333"},
+	{Name: "staging", Region: "us-east-1", AccountID: "444455556666"},
+}
+
+// demoProfileRegion is the region a demo profile opens in when none was
+// remembered for it.
+func demoProfileRegion(profile string) string {
+	for _, p := range demoProfiles {
+		if p.Name == profile {
+			return p.Region
+		}
+	}
+	return "ap-southeast-3"
 }
 
 // demoInstances returns a fixed, representative inventory for demo recordings.
@@ -45,12 +63,12 @@ func demoInstances() []inventory.Instance {
 	return instances
 }
 
-// filterDemo mimics server-side scoping over the sample set so the demo's filter
-// (f) and source toggle (t) actually narrow the list during a recording.
+// filterDemo mimics server-side scoping over the sample set, so the demo's
+// filter (f) and source toggle (t) narrow the list during a recording.
 func filterDemo(in []inventory.Instance, f inventory.Filter, src inventory.Source) []inventory.Instance {
 	out := make([]inventory.Instance, 0, len(in))
 	for _, it := range in {
-		// SSM-only hides nodes that aren't SSM-managed (no ping status).
+		// SSM-only hides nodes that are not SSM-managed (no ping status).
 		if src == inventory.SourceSSMOnly && it.PingStatus == "" {
 			continue
 		}
