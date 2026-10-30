@@ -31,6 +31,22 @@ Sleep 2s
 Down@500ms 3
 Sleep 1.2s
 
+# Switch to another AWS profile.
+Type "P"
+Sleep 1.5s
+Type "prod"
+Sleep 1.2s
+Enter
+Sleep 2s
+
+# Switch region, found by city name.
+Type "R"
+Sleep 1.2s
+Type "sydney"
+Sleep 1.5s
+Enter
+Sleep 2s
+
 # Pin the highlighted instance; pinned rows sort to the top.
 Type "p"
 Sleep 1.8s
