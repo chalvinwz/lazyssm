@@ -8,6 +8,13 @@ the pull requests merged since the last release; each line links to its PR for
 the details. Earlier versions follow
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.0](https://github.com/chalvinwz/lazyssm/compare/v0.4.0...v0.5.0) (2026-10-30)
+
+
+### Added
+
+* switch AWS profile and region in the TUI ([e48f21a](https://github.com/chalvinwz/lazyssm/commit/e48f21a4a1b4ec51bc5c671eeae5c9709c66cf6e))
+
 ## [0.4.0] - 2026-10-30
 
 ### Added
