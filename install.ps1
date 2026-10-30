@@ -2,12 +2,11 @@
 #
 #   irm https://raw.githubusercontent.com/chalvinwz/lazyssm/main/install.ps1 | iex
 #
-# The release zip is checked against the release's checksums.txt before
-# anything is installed. lazyssm.exe goes into a folder in your profile, and
-# that folder is added to your user PATH, so no admin rights are needed.
-# Runs in Windows PowerShell 5.1 and PowerShell 7. There is no param() block
-# and no exit: a failed install throws an error and leaves your PowerShell
-# session open.
+# The zip is verified against the release's checksums.txt before anything is
+# installed. lazyssm.exe goes into a folder in your profile that is added to
+# your user PATH, so no admin rights are needed. Works in Windows PowerShell
+# 5.1 and PowerShell 7. There is no param() block and no exit: a failed
+# install throws and leaves your PowerShell session open.
 #
 # Environment:
 #   LAZYSSM_VERSION        release to install, e.g. v0.3.0 or 0.3.0 (default: latest)
@@ -17,13 +16,12 @@
 #                          directory laid out as <tag>\<file> (used by tests)
 #                          (default: https://github.com/chalvinwz/lazyssm/releases/download)
 
-# Everything runs inside this one script block. Its variables, functions and
-# preferences stay out of the caller's session, and a truncated download
-# fails to parse instead of running half a script.
+# One script block keeps variables, functions and preferences out of the
+# caller's session, and makes a truncated download fail to parse instead of
+# running half a script.
 & {
     $ErrorActionPreference = 'Stop'
-    # Windows PowerShell 5.1 downloads many times slower while it draws a
-    # progress bar.
+    # Windows PowerShell 5.1 downloads far slower while drawing a progress bar.
     $ProgressPreference = 'SilentlyContinue'
 
     $RepoUrl = 'https://github.com/chalvinwz/lazyssm'
@@ -41,9 +39,8 @@
         Write-Host "warning: $Message" -ForegroundColor Yellow
     }
 
-    # Stop-Install ends the install with an error: the message, then each
-    # hint on its own indented line. It throws instead of calling exit, so
-    # under iex the caller's session survives.
+    # Stop-Install fails with the message and one indented line per hint. It
+    # throws instead of calling exit so the caller's session survives iex.
     function Stop-Install([string]$Message, [string[]]$Hint = @()) {
         $text = $Message
         foreach ($line in $Hint) {
@@ -95,18 +92,16 @@
     }
 
     # Get-LatestTag returns the tag that releases/latest redirects to, as
-    # install.sh does (no API call, so no rate limit). Only if that fails does
-    # it ask the GitHub API, which allows 60 unauthenticated requests an hour
-    # per IP address, and it warns when it does, so the fallback is visible.
+    # install.sh does, to avoid the API rate limit. If that fails it warns and
+    # asks the GitHub API (60 unauthenticated requests an hour per IP).
     function Get-LatestTag {
         Write-Step 'Looking up the latest release'
         $redirectFailure = ''
         try {
             $resp = Invoke-WebRequest -UseBasicParsing -Method Head -Uri $LatestReleaseUrl
-            # The URI after redirects: Windows PowerShell 5.1 answers with an
-            # HttpWebResponse, PowerShell 7 with an HttpResponseMessage. The
-            # properties are looked up by name, so a caller's strict mode
-            # cannot turn the one that is missing into an error.
+            # Read the final URI: 5.1 returns an HttpWebResponse, 7 an
+            # HttpResponseMessage. Properties are looked up by name so a
+            # caller's strict mode cannot fail on the missing one.
             $base = $resp.BaseResponse
             $final = ''
             if ($base.PSObject.Properties['ResponseUri']) {
@@ -152,8 +147,7 @@
         return $version
     }
 
-    # Get-InstallDir returns the absolute install dir, without a trailing
-    # slash.
+    # Get-InstallDir returns the absolute install dir without a trailing slash.
     function Get-InstallDir {
         $dir = $env:LAZYSSM_INSTALL_DIR
         if (-not $dir) {
@@ -162,7 +156,7 @@
             }
             $dir = [IO.Path]::Combine($env:LOCALAPPDATA, 'Programs', 'lazyssm')
         }
-        # Relative to the current location, like any other PowerShell path.
+        # Resolve relative paths from the PowerShell location, as cmdlets do.
         $dir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($dir)
         $trimmed = $dir.TrimEnd('\', '/')
         if ($trimmed -and -not $trimmed.EndsWith(':')) {
@@ -206,9 +200,9 @@
         if (-not $expected) {
             Stop-Install "checksums.txt for $Tag has no entry for $Archive; not installing"
         }
-        # Get-FileHash and Expand-Archive are script-module functions, which
-        # on Windows PowerShell 5.1 do not inherit $ErrorActionPreference, so
-        # they get -ErrorAction Stop to make a failure reach the catch.
+        # On 5.1, script-module functions such as Get-FileHash and
+        # Expand-Archive do not inherit $ErrorActionPreference, so they need
+        # -ErrorAction Stop for a failure to reach the catch.
         try {
             $actual = (Get-FileHash -LiteralPath $Zip -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
         } catch {
@@ -326,10 +320,9 @@
         } finally {
             $key.Close()
         }
-        # Setting a user variable through .NET broadcasts WM_SETTINGCHANGE,
-        # so Explorer, and the terminals it starts from now on, see the new
-        # Path without a sign-out. Removing a variable that does not exist
-        # changes nothing else.
+        # Setting a user variable through .NET broadcasts WM_SETTINGCHANGE, so
+        # Explorer and terminals started from now on see the new Path without
+        # a sign-out. Removing a nonexistent variable changes nothing else.
         [Environment]::SetEnvironmentVariable('LAZYSSM_PATH_REFRESH', $null, 'User')
         return $true
     }
@@ -369,8 +362,8 @@
         Stop-Install "install.ps1 is for Windows; this is $($PSVersionTable.OS)" -Hint 'in a terminal, use install.sh instead:', "  curl -fsSL $InstallShUrl | sh", "or install with Homebrew; see $RepoUrl"
     }
     if ($PSVersionTable.PSEdition -ne 'Core') {
-        # Make sure this session's web requests can use TLS 1.2: Windows
-        # PowerShell 5.1 may offer only TLS 1.0, which GitHub refuses.
+        # Windows PowerShell 5.1 may offer only TLS 1.0, which GitHub refuses,
+        # so enable TLS 1.2 for this session.
         $tls12 = [Net.SecurityProtocolType]::Tls12
         if (([Net.ServicePointManager]::SecurityProtocol -band $tls12) -ne $tls12) {
             [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor $tls12

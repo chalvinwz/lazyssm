@@ -51,9 +51,8 @@ jobs:
           go-version-file: "go.mod"
       - uses: golang/govulncheck-action@032d45514ae346b1db93c04b0c90b841c370344f # v1.1.0
         with:
-          # The job checks out above; the action's embedded checkout (an old
-          # pinned version) fails against the git config newer checkout
-          # releases leave behind.
+          # Skip the action's built-in checkout: it pins an old version that
+          # fails on the git config left by the newer checkout above.
           repo-checkout: false
 
   build:

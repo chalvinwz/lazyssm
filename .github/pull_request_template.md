@@ -15,6 +15,7 @@ Closes #
 
 ## Checklist
 
+- [ ] Title starts with `feat:`, `fix:`, `chore:`, `ci:`, `docs:`, `refactor:` or `test:`; `feat:` and `fix:` titles become the changelog line
 - [ ] Branch follows `prefix/kebab-summary` naming (feature/fix/hotfix/chore/ci/docs/refactor/test)
 - [ ] `make check` passes locally (gofmt, vet, tests)
 - [ ] Tests added or updated where it makes sense
