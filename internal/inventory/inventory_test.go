@@ -11,6 +11,7 @@ import (
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
+	"github.com/aws/smithy-go"
 )
 
 func TestBuildEC2Filters(t *testing.T) {
@@ -116,14 +117,42 @@ func TestMergeOfflinePingNotReady(t *testing.T) {
 	}
 }
 
+func TestMergeNamesNodesWithoutEC2Record(t *testing.T) {
+	ssmNodes := []ssmNode{
+		{ID: "mi-1", Name: "edge-gateway", ComputerName: "gw01.corp.local", PingStatus: "Online"},
+		{ID: "mi-2", ComputerName: "pi.local", PingStatus: "Online"},
+		{ID: "i-1", ComputerName: "ip-10-0-0-1", PingStatus: "Online"},
+	}
+	ec2Insts := []ec2Inst{{ID: "i-1"}} // an EC2 instance without a Name tag
+	names := map[string]string{}
+	for _, in := range merge(ssmNodes, ec2Insts, SourceSSMOnly, false) {
+		names[in.InstanceID] = in.Name
+	}
+	if names["mi-1"] != "edge-gateway" {
+		t.Errorf("on-premises node should use its activation name, got %q", names["mi-1"])
+	}
+	if names["mi-2"] != "pi.local" {
+		t.Errorf("without an activation name, use the hostname, got %q", names["mi-2"])
+	}
+	if names["i-1"] != "" {
+		t.Errorf("an EC2 instance keeps its Name tag, even an empty one, got %q", names["i-1"])
+	}
+}
+
 // --- fakes for Fetch ---
 
 type fakeSSM struct {
-	pages []*ssm.DescribeInstanceInformationOutput
-	calls int
+	pages  []*ssm.DescribeInstanceInformationOutput
+	calls  int
+	gotMax int32
+	err    error
 }
 
-func (f *fakeSSM) DescribeInstanceInformation(_ context.Context, _ *ssm.DescribeInstanceInformationInput, _ ...func(*ssm.Options)) (*ssm.DescribeInstanceInformationOutput, error) {
+func (f *fakeSSM) DescribeInstanceInformation(_ context.Context, in *ssm.DescribeInstanceInformationInput, _ ...func(*ssm.Options)) (*ssm.DescribeInstanceInformationOutput, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	f.gotMax = aws.ToInt32(in.MaxResults)
 	out := f.pages[f.calls]
 	f.calls++
 	return out, nil
@@ -132,10 +161,14 @@ func (f *fakeSSM) DescribeInstanceInformation(_ context.Context, _ *ssm.Describe
 type fakeEC2 struct {
 	out      *ec2.DescribeInstancesOutput
 	gotInput *ec2.DescribeInstancesInput
+	err      error
 }
 
 func (f *fakeEC2) DescribeInstances(_ context.Context, in *ec2.DescribeInstancesInput, _ ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error) {
 	f.gotInput = in
+	if f.err != nil {
+		return nil, f.err
+	}
 	return f.out, nil
 }
 
@@ -160,12 +193,15 @@ func TestFetchPaginatesSSMAndPassesFilters(t *testing.T) {
 		}}},
 	}}
 
-	got, err := Fetch(context.Background(), sfake, efake, Filter{NamePrefix: "web-"}, SourceSSMOnly)
+	got, _, err := Fetch(context.Background(), sfake, efake, Filter{NamePrefix: "web-"}, SourceSSMOnly)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if sfake.calls != 2 {
 		t.Errorf("want 2 SSM pages fetched, got %d", sfake.calls)
+	}
+	if sfake.gotMax != ssmPageSize {
+		t.Errorf("want SSM pages of %d, got MaxResults %d", ssmPageSize, sfake.gotMax)
 	}
 	if len(got) != 2 {
 		t.Fatalf("want 2 merged instances, got %d", len(got))
@@ -189,9 +225,78 @@ func (blockingSSM) DescribeInstanceInformation(ctx context.Context, _ *ssm.Descr
 func TestFetchRespectsContextDeadline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
-	_, err := Fetch(ctx, blockingSSM{}, &fakeEC2{out: &ec2.DescribeInstancesOutput{}}, Filter{}, SourceSSMOnly)
+	_, _, err := Fetch(ctx, blockingSSM{}, &fakeEC2{out: &ec2.DescribeInstancesOutput{}}, Filter{}, SourceSSMOnly)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("want context.DeadlineExceeded, got %v", err)
+	}
+}
+
+// blockingEC2 blocks until the context is cancelled, simulating a hung endpoint.
+type blockingEC2 struct{}
+
+func (blockingEC2) DescribeInstances(ctx context.Context, _ *ec2.DescribeInstancesInput, _ ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestFetchSSMErrorCancelsEC2(t *testing.T) {
+	boom := errors.New("ssm down")
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := Fetch(context.Background(), &fakeSSM{err: boom}, blockingEC2{}, Filter{}, SourceSSMOnly)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, boom) {
+			t.Fatalf("want the SSM error, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Fetch kept waiting on EC2 after SSM failed instead of cancelling it")
+	}
+}
+
+func onlineNodePage(id, hostname string) []*ssm.DescribeInstanceInformationOutput {
+	return []*ssm.DescribeInstanceInformationOutput{{
+		InstanceInformationList: []ssmtypes.InstanceInformation{
+			{InstanceId: aws.String(id), PingStatus: ssmtypes.PingStatusOnline, ComputerName: aws.String(hostname)},
+		},
+	}}
+}
+
+func TestFetchWithoutEC2AccessKeepsSSMNodes(t *testing.T) {
+	denied := &smithy.GenericAPIError{Code: "UnauthorizedOperation", Message: "not authorized"}
+	sfake := &fakeSSM{pages: onlineNodePage("i-1", "ip-10-0-4-12.ec2.internal")}
+	got, warning, err := Fetch(context.Background(), sfake, &fakeEC2{err: denied}, Filter{}, SourceSSMOnly)
+	if err != nil {
+		t.Fatalf("an EC2 denial must not fail SSM-only browsing: %v", err)
+	}
+	if warning == "" {
+		t.Error("want a warning saying EC2 data is missing")
+	}
+	if len(got) != 1 || got[0].Name != "ip-10-0-4-12.ec2.internal" {
+		t.Fatalf("want the node, named by hostname, got %+v", got)
+	}
+}
+
+func TestFetchEC2ErrorsThatStillFail(t *testing.T) {
+	denied := &smithy.GenericAPIError{Code: "UnauthorizedOperation"}
+	for _, tc := range []struct {
+		name string
+		err  error
+		f    Filter
+		src  Source
+	}{
+		{"denied with a filter, which only EC2 applies", denied, Filter{NamePrefix: "web-"}, SourceSSMOnly},
+		{"denied while listing all EC2", denied, Filter{}, SourceAllEC2},
+		{"not a permission problem", errors.New("network down"), Filter{}, SourceSSMOnly},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sfake := &fakeSSM{pages: onlineNodePage("i-1", "host")}
+			if _, _, err := Fetch(context.Background(), sfake, &fakeEC2{err: tc.err}, tc.f, tc.src); err == nil {
+				t.Error("want the EC2 error")
+			}
+		})
 	}
 }
 

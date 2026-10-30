@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strconv"
 	"testing"
+	"time"
 )
 
 // fakeHost swaps the platform seams for the duration of a test.
@@ -121,6 +122,11 @@ func fakeTool(t *testing.T, exit int) (path, copied string) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake copy tool is a shell script")
 	}
+	// Starting a just-written script can take seconds while the whole suite
+	// runs in parallel; that is not a wedged tool, so lift the 3 s limit.
+	origTimeout := toolTimeout
+	toolTimeout = 30 * time.Second
+	t.Cleanup(func() { toolTimeout = origTimeout })
 	dir := t.TempDir()
 	copied = filepath.Join(dir, "copied")
 	path = filepath.Join(dir, "pbcopy")

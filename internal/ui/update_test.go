@@ -2,10 +2,14 @@ package ui
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"github.com/aws/aws-sdk-go-v2/aws"
 
+	"github.com/chalvinwz/lazyssm/internal/awscfg"
 	"github.com/chalvinwz/lazyssm/internal/inventory"
 	"github.com/chalvinwz/lazyssm/internal/preflight"
 	"github.com/chalvinwz/lazyssm/internal/session"
@@ -147,8 +151,106 @@ func TestConnectGuards(t *testing.T) {
 	m.recompute()
 	m.cursor = 0
 	m.binariesOK = true
+	m.startSession = func(_, _, _ string) tea.Cmd { return func() tea.Msg { return nil } }
 	if _, cmd := m.connect(); cmd == nil {
 		t.Error("expected a connect cmd for a ready instance with binaries OK")
+	}
+}
+
+func TestConnectUsesResolvedRegion(t *testing.T) {
+	m := newTestModel(t)
+	// No --region flag (m.region is empty); the SDK resolved it from the profile.
+	m.clients = awscfg.Clients{Cfg: aws.Config{Region: "eu-west-1"}}
+	m.all = sampleInstances()
+	m.recompute()
+	m.binariesOK = true
+	var gotRegion string
+	m.startSession = func(_, _, region string) tea.Cmd {
+		gotRegion = region
+		return nil
+	}
+	m.connect()
+	if gotRegion != "eu-west-1" {
+		t.Errorf("session should open in the browsed region eu-west-1, got %q", gotRegion)
+	}
+}
+
+// manyInstances is a sorted list long enough for the cursor to sit below the
+// rows a search ranks first.
+func manyInstances() []inventory.Instance {
+	var out []inventory.Instance
+	for _, n := range []string{"api-1", "api-2", "cache-1", "db-1", "db-2", "web-a", "web-b", "web-c", "worker-1", "worker-2"} {
+		out = append(out, inventory.Instance{InstanceID: "i-" + n, Name: n, SSMReady: true})
+	}
+	return out
+}
+
+func loaded(t *testing.T, items []inventory.Instance) Model {
+	t.Helper()
+	nm, _ := newTestModel(t).Update(instancesMsg{items: items})
+	return nm.(Model)
+}
+
+func press(m Model, keys string) Model {
+	for _, r := range keys {
+		nm, _ := m.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+		m = nm.(Model)
+	}
+	return m
+}
+
+func TestSearchStartsOnBestMatch(t *testing.T) {
+	m := loaded(t, manyInstances())
+	m.cursor = 7 // left on web-c while browsing the full list
+	m = press(m, "/w")
+	if m.cursor != 0 {
+		t.Fatalf("a new query should start on the best match, cursor=%d", m.cursor)
+	}
+
+	best := m.visible[0].InstanceID
+	var connected string
+	m.binariesOK = true
+	m.startSession = func(id, _, _ string) tea.Cmd {
+		connected = id
+		return nil
+	}
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if connected != best {
+		t.Errorf("Enter should connect to the top match %s, connected to %q", best, connected)
+	}
+}
+
+func TestPinKeepsSelection(t *testing.T) {
+	m := loaded(t, manyInstances())
+	m.cursor = 8 // worker-1
+	m = press(m, "p")
+	if got := m.selectedID(); got != "i-worker-1" {
+		t.Errorf("after pinning, selection should stay on i-worker-1, got %s", got)
+	}
+	if m.cursor != 0 {
+		t.Errorf("the pinned instance sorts first, so the cursor should follow it to 0, got %d", m.cursor)
+	}
+	m = press(m, "p")
+	if got := m.selectedID(); got != "i-worker-1" {
+		t.Errorf("after unpinning, selection should stay on i-worker-1, got %s", got)
+	}
+}
+
+func TestRefreshKeepsSelection(t *testing.T) {
+	m := loaded(t, manyInstances())
+	m.cursor = 3 // db-1
+	// The refresh brings in an instance that sorts above db-1.
+	items := append(manyInstances(), inventory.Instance{InstanceID: "i-bastion", Name: "bastion", SSMReady: true})
+	nm, _ := m.Update(instancesMsg{items: items})
+	if got := nm.(Model).selectedID(); got != "i-db-1" {
+		t.Errorf("refresh should keep i-db-1 selected, got %s", got)
+	}
+}
+
+func TestFetchWarningShownInStatus(t *testing.T) {
+	nm, _ := newTestModel(t).Update(instancesMsg{items: sampleInstances(), warning: "no ec2 access"})
+	if status := nm.(Model).status; !strings.Contains(status, "no ec2 access") {
+		t.Errorf("status should carry the fetch warning, got %q", status)
 	}
 }
 
@@ -165,6 +267,9 @@ func TestTogglePinReSorts(t *testing.T) {
 	}
 	if m2.visible[0].InstanceID != id {
 		t.Errorf("pinned %s should sort first, got %s", id, m2.visible[0].InstanceID)
+	}
+	if m2.cursor != 0 {
+		t.Errorf("selection should follow the pinned instance to the top, cursor=%d", m2.cursor)
 	}
 }
 

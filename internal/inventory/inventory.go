@@ -3,6 +3,7 @@ package inventory
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 	"time"
@@ -12,7 +13,15 @@ import (
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
+	"github.com/aws/smithy-go"
 )
+
+// ssmPageSize is the largest page DescribeInstanceInformation accepts. The
+// default of 10 turns a 500-node fleet into 50 sequential calls.
+const ssmPageSize = 50
+
+// ec2DeniedWarning explains an SSM-only inventory fetched without EC2 access.
+const ec2DeniedWarning = "no ec2:DescribeInstances access, names are SSM hostnames"
 
 // Source selects which instances the inventory surfaces.
 type Source int
@@ -54,7 +63,7 @@ func Sort(in []Instance) { sortInstances(in) }
 // Instance is a merged view of an EC2 instance and/or SSM managed node.
 type Instance struct {
 	InstanceID   string
-	Name         string // EC2 Name tag
+	Name         string // EC2 Name tag; for nodes without an EC2 record, the SSM name or hostname
 	PlatformType string
 	IP           string
 	AgentStatus  string // SSM agent status; "" when not an SSM node
@@ -70,6 +79,8 @@ type Instance struct {
 // keeping merge logic independent of the AWS SDK types for testability.
 type ssmNode struct {
 	ID           string
+	Name         string // set at activation for on-premises nodes; empty for EC2
+	ComputerName string // the node's hostname
 	PingStatus   string
 	AgentStatus  string
 	PlatformType string
@@ -196,6 +207,14 @@ func mergeOne(id string, e *ec2Inst, n *ssmNode) Instance {
 			inst.IP = n.IP
 		}
 		inst.SSMReady = strings.EqualFold(n.PingStatus, "Online")
+		if e == nil {
+			// No EC2 record, so no Name tag: an on-premises node, or EC2 access
+			// was denied. Use the activation name, else the hostname.
+			inst.Name = n.Name
+			if inst.Name == "" {
+				inst.Name = n.ComputerName
+			}
+		}
 	}
 	return inst
 }
@@ -259,18 +278,52 @@ func naturalLess(a, b string) bool {
 	return len(a)-i < len(b)-j
 }
 
-// Fetch retrieves SSM nodes and EC2 instances, applies the server-side filter,
-// and returns the merged inventory for the selected source.
-func Fetch(ctx context.Context, ssmAPI SSMAPI, ec2API EC2API, f Filter, src Source) ([]Instance, error) {
+// Fetch retrieves SSM nodes and EC2 instances concurrently, applies the
+// server-side filter, and returns the merged inventory for the selected source.
+//
+// EC2 access is optional when browsing SSM nodes without a filter: if
+// DescribeInstances is denied, Fetch returns the SSM nodes anyway, named by
+// hostname, with a warning saying what is missing.
+func Fetch(ctx context.Context, ssmAPI SSMAPI, ec2API EC2API, f Filter, src Source) (items []Instance, warning string, err error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var ec2Insts []ec2Inst
+	var ec2Err error
+	ec2Done := make(chan struct{})
+	go func() {
+		defer close(ec2Done)
+		ec2Insts, ec2Err = fetchEC2(ctx, ec2API, f)
+	}()
+
 	ssmNodes, err := fetchSSM(ctx, ssmAPI)
 	if err != nil {
-		return nil, err
+		cancel() // the EC2 half is useless now; don't wait out its deadline
+		<-ec2Done
+		return nil, "", err
 	}
-	ec2Insts, err := fetchEC2(ctx, ec2API, f)
-	if err != nil {
-		return nil, err
+	<-ec2Done
+	if ec2Err != nil {
+		if src != SourceSSMOnly || f.Active() || !isAccessDenied(ec2Err) {
+			return nil, "", ec2Err
+		}
+		warning = ec2DeniedWarning
 	}
-	return merge(ssmNodes, ec2Insts, src, f.Active()), nil
+	return merge(ssmNodes, ec2Insts, src, f.Active()), warning, nil
+}
+
+// isAccessDenied reports whether err is an IAM denial. EC2 reports it as
+// UnauthorizedOperation, most other services as AccessDenied(Exception).
+func isAccessDenied(err error) bool {
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	switch apiErr.ErrorCode() {
+	case "UnauthorizedOperation", "AccessDenied", "AccessDeniedException":
+		return true
+	}
+	return false
 }
 
 func fetchSSM(ctx context.Context, api SSMAPI) ([]ssmNode, error) {
@@ -278,7 +331,8 @@ func fetchSSM(ctx context.Context, api SSMAPI) ([]ssmNode, error) {
 	var token *string
 	for {
 		resp, err := api.DescribeInstanceInformation(ctx, &ssm.DescribeInstanceInformationInput{
-			NextToken: token,
+			MaxResults: aws.Int32(ssmPageSize),
+			NextToken:  token,
 		})
 		if err != nil {
 			return nil, err
@@ -286,6 +340,8 @@ func fetchSSM(ctx context.Context, api SSMAPI) ([]ssmNode, error) {
 		for _, info := range resp.InstanceInformationList {
 			out = append(out, ssmNode{
 				ID:           aws.ToString(info.InstanceId),
+				Name:         aws.ToString(info.Name),
+				ComputerName: aws.ToString(info.ComputerName),
 				PingStatus:   string(info.PingStatus),
 				AgentStatus:  agentStatus(info),
 				PlatformType: string(info.PlatformType),
