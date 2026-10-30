@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Instance age and colored EC2 state in the detail sidebar; configurable list
+  columns (`columns` in the config file: `name`, `ip`, `state`, `age`, `ssm`,
+  `id`, `os`, `agent`, `ping`); theme presets (`theme` in the config file, or
+  `--theme`: `default`, `tokyo-night`, `dracula`, `nord`, `catppuccin-mocha`);
+  and `transparent_background` ([#33]).
+
+### Changed
+
+- The inventory fetch asks SSM for 50 nodes per page instead of the default 10,
+  and queries SSM and EC2 at the same time.
+- Dependencies: Bubbles 2.2.1, Bubble Tea 2.1.0, Lip Gloss 2.0.6,
+  aws-sdk-go-v2/config 1.33.9, smithy-go 1.28.6 ([#36]).
+
+### Fixed
+
+- Typing in the search bar moves the highlight to the best match. It used to
+  stay on the previous row number, so `Enter` could connect to a weaker match.
+- Pinning, unpinning and refreshing keep the same instance selected instead of
+  the same row number, so a second `p` no longer lands on a different instance.
+- SSM-only browsing works without `ec2:DescribeInstances`, as the README already
+  said: nodes are listed by hostname and the status line names what is missing.
+  It used to fail the whole fetch.
+- Sessions open in the region lazyssm resolved for the inventory on screen, not
+  only the one given with `--region`.
+- On-premises and other non-EC2 nodes (`mi-…`) show their registered name or
+  hostname instead of "(no Name)".
+
 ## [0.3.0] - 2026-10-25
 
 ### Added
@@ -117,5 +146,7 @@ Initial public release.
 [#18]: https://github.com/chalvinwz/lazyssm/issues/18
 [#20]: https://github.com/chalvinwz/lazyssm/pull/20
 [#32]: https://github.com/chalvinwz/lazyssm/pull/32
+[#33]: https://github.com/chalvinwz/lazyssm/pull/33
 [#34]: https://github.com/chalvinwz/lazyssm/pull/34
 [#35]: https://github.com/chalvinwz/lazyssm/pull/35
+[#36]: https://github.com/chalvinwz/lazyssm/pull/36

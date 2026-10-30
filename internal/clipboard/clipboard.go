@@ -15,7 +15,8 @@ import (
 )
 
 // toolTimeout bounds a copy-tool run so a wedged xclip can't hang the command.
-const toolTimeout = 3 * time.Second
+// A variable so tests can allow for slow process start-up on a loaded host.
+var toolTimeout = 3 * time.Second
 
 // CopiedMsg reports the outcome of a copy made with the platform's copy tool.
 type CopiedMsg struct {

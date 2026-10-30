@@ -32,10 +32,11 @@ for the one task you repeat all day: find the instance and connect.
   re-invoking a picker on every connect.
 - **Merged inventory** — SSM `DescribeInstanceInformation` is joined with EC2
   `DescribeInstances` so you see Name tags, IPs, and instance state alongside
-  SSM agent status.
+  SSM agent status. On-premises and other non-EC2 nodes (`mi-…`) show the name
+  they were registered with, or their hostname.
 - **Server-side tag/name filter** — pushes `tag:K=V` and Name-prefix constraints
-  to the EC2/SSM APIs so the filter scales to large fleets without pulling
-  everything locally.
+  to the EC2 API so the filter scales to large fleets without pulling every
+  EC2 instance locally.
 - **Client-side fuzzy search** — live Name-based fuzzy filter over the already-
   fetched set; navigate results with arrow keys while typing.
 - **Toggle source** — switch between SSM-managed nodes only (default) and all
@@ -255,8 +256,10 @@ lazyssm has two independent narrowing mechanisms.
 
 ### Server-side filter (`f`)
 
-Press `f` to open the filter bar. Tokens are sent to the EC2/SSM APIs —
-nothing is downloaded that does not match.
+Press `f` to open the filter bar. Tokens are sent to EC2 as `DescribeInstances`
+filters, so EC2 returns only matching instances. The SSM node list is fetched
+in full and joined with that result, so nodes that aren't EC2 instances never
+match a filter.
 
 | Token syntax       | Effect                                         |
 | ------------------ | ---------------------------------------------- |
@@ -280,7 +283,8 @@ rather than silently dropped.
 
 Press `/` to open the search bar. lazyssm runs a fuzzy match against each
 instance's **Name tag** (falling back to the instance ID when no Name is set)
-over the already-fetched set — no extra API calls. While the search bar is
+over the already-fetched set — no extra API calls. Each change to the query
+moves the highlight to the best match. While the search bar is
 focused you can navigate the narrowed results live with `↑`/`↓` (or
 `Ctrl-N`/`Ctrl-P`); press `Enter` to connect to the highlighted instance, or
 `Esc` to clear the search and return to the full list.
@@ -456,8 +460,9 @@ sts:GetCallerIdentity
 
 `sts:GetCallerIdentity` is used only by the `doctor` preflight check and the
 TUI startup credential verification. `ec2:DescribeInstances` powers the Name
-tag merge, IP display, and the all-EC2 toggle; SSM-only browsing degrades
-gracefully without it (names and tags will be absent). `ssm:StartSession` is
+tag merge, IP display, the filter bar, and the all-EC2 toggle. Without it,
+SSM-only browsing still works: nodes are listed by hostname, tags and EC2 state
+are missing, and the status line says so. `ssm:StartSession` is
 required on the target instance resource.
 
 Minimal example policy:

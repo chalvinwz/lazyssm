@@ -70,15 +70,17 @@ type Model struct {
 	fetchSeq int  // bumped per issued fetch; replies with a stale seq are dropped
 	demo     bool // LAZYSSM_DEMO: serve fixed sample data, never call AWS
 
-	copyText func(label, text string) (cmd tea.Cmd, viaTerminal bool) // clipboard.Copy outside tests
+	copyText     func(label, text string) (cmd tea.Cmd, viaTerminal bool) // clipboard.Copy outside tests
+	startSession func(instanceID, profile, region string) tea.Cmd         // session.ConnectCmd outside tests
 }
 
 // instancesMsg carries the result of a background inventory fetch. seq ties the
 // reply to the fetch that issued it so out-of-order results can be discarded.
 type instancesMsg struct {
-	seq   int
-	items []inventory.Instance
-	err   error
+	seq     int
+	items   []inventory.Instance
+	warning string // what the fetch had to leave out, e.g. EC2 names
+	err     error
 }
 
 // preflightMsg carries the result of background credential checks.
@@ -99,17 +101,18 @@ func New(clients awscfg.Clients, st *store.Store, profile, region string, autoLo
 		theme = st.Theme
 	}
 	return Model{
-		clients:     clients,
-		profile:     profile,
-		region:      region,
-		store:       st,
-		autoLogin:   autoLogin,
-		copyText:    clipboard.Copy,
-		src:         inventory.SourceSSMOnly,
-		mode:        modeList,
-		loading:     true,
-		filterInput: fi,
-		searchInput: si,
+		clients:      clients,
+		profile:      profile,
+		region:       region,
+		store:        st,
+		autoLogin:    autoLogin,
+		copyText:     clipboard.Copy,
+		startSession: session.ConnectCmd,
+		src:          inventory.SourceSSMOnly,
+		mode:         modeList,
+		loading:      true,
+		filterInput:  fi,
+		searchInput:  si,
 	}.WithTheme(theme)
 }
 
@@ -133,8 +136,8 @@ func (m Model) fetchCmd() tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), fetchTimeout)
 		defer cancel()
-		items, err := inventory.Fetch(ctx, clients.SSM, clients.EC2, filter, src)
-		return instancesMsg{seq: seq, items: items, err: err}
+		items, warning, err := inventory.Fetch(ctx, clients.SSM, clients.EC2, filter, src)
+		return instancesMsg{seq: seq, items: items, warning: warning, err: err}
 	}
 }
 
@@ -191,6 +194,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.all = msg.items
 		m.recompute()
 		m.status = fmt.Sprintf("%d instances", len(m.all))
+		if msg.warning != "" {
+			m.status += " · " + msg.warning
+		}
 		return m, nil
 
 	case preflightMsg:
@@ -377,9 +383,19 @@ func (m Model) keySearch(msg tea.KeyPressMsg, key string) (tea.Model, tea.Cmd) {
 		m.moveCursor(1)
 		return m, nil
 	}
+	return m.updateSearch(msg)
+}
+
+// updateSearch feeds msg to the search input. A changed query re-ranks the
+// matches, so the cursor starts again on the best one.
+func (m Model) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
+	before := m.searchInput.Value()
 	var cmd tea.Cmd
 	m.searchInput, cmd = m.searchInput.Update(msg)
-	m.recompute()
+	if m.searchInput.Value() != before {
+		m.recomputeKeeping("")
+		m.cursor = 0
+	}
 	return m, cmd
 }
 
@@ -389,7 +405,7 @@ func (m Model) routeInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case modeFilter:
 		m.filterInput, cmd = m.filterInput.Update(msg)
 	case modeSearch:
-		m.searchInput, cmd = m.searchInput.Update(msg)
+		return m.updateSearch(msg) // e.g. a paste, which arrives as its own msg
 	}
 	return m, cmd
 }
@@ -414,7 +430,9 @@ func (m Model) togglePin() (tea.Model, tea.Cmd) {
 		}
 	}
 	m.applyPins(m.all)
-	m.recompute()
+	// applyPins re-sorted m.all in place, and m.visible may share its backing
+	// array, so the selection must be restored by the ID captured above.
+	m.recomputeKeeping(id)
 	return m, nil
 }
 
@@ -467,7 +485,9 @@ func (m Model) connect() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.status = "connecting to " + inst.InstanceID + "…"
-	return m, session.ConnectCmd(inst.InstanceID, m.profile, m.region)
+	// The resolved region rather than the --region flag, so the session opens in
+	// the region whose inventory is on screen.
+	return m, m.startSession(inst.InstanceID, m.profile, m.clients.Region())
 }
 
 // applyPins stamps pinned state from the store onto the given instances.
@@ -481,22 +501,42 @@ func (m Model) applyPins(items []inventory.Instance) {
 	inventory.Sort(items)
 }
 
-// recompute rebuilds the visible slice by applying the fuzzy search query.
-func (m *Model) recompute() {
+// recompute rebuilds the visible slice, keeping the cursor on the selected
+// instance while it stays visible.
+func (m *Model) recompute() { m.recomputeKeeping(m.selectedID()) }
+
+// recomputeKeeping rebuilds the visible slice by applying the fuzzy search
+// query, then puts the cursor on the instance with ID keep, or clamps it when
+// that instance is no longer visible.
+func (m *Model) recomputeKeeping(keep string) {
 	q := strings.TrimSpace(m.searchInput.Value())
 	if q == "" {
 		m.visible = m.all
-		m.cursor = clamp(m.cursor, 0, max(0, len(m.visible)-1))
-		return
+	} else {
+		matches := fuzzy.FindFrom(q, rowSource(m.all))
+		out := make([]inventory.Instance, 0, len(matches))
+		for _, mt := range matches {
+			out = append(out, m.all[mt.Index])
+		}
+		m.visible = out
 	}
-	src := rowSource(m.all)
-	matches := fuzzy.FindFrom(q, src)
-	out := make([]inventory.Instance, 0, len(matches))
-	for _, mt := range matches {
-		out = append(out, m.all[mt.Index])
+	if keep != "" {
+		for i := range m.visible {
+			if m.visible[i].InstanceID == keep {
+				m.cursor = i
+				return
+			}
+		}
 	}
-	m.visible = out
 	m.cursor = clamp(m.cursor, 0, max(0, len(m.visible)-1))
+}
+
+// selectedID returns the instance ID under the cursor, or "" when there is none.
+func (m Model) selectedID() string {
+	if m.cursor < 0 || m.cursor >= len(m.visible) {
+		return ""
+	}
+	return m.visible[m.cursor].InstanceID
 }
 
 // rowSource adapts instances to fuzzy.Source.
